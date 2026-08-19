@@ -1,0 +1,82 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum RuleStatus {
+  in_force
+  contested
+  needs_review
+}
+
+model Tenant {
+  id        String           @id @default(cuid())
+  name      String
+  config    Json
+  createdAt DateTime         @default(now())
+  contexts  TenantContext[]
+  operations Operation[]
+}
+
+model TaxRule {
+  id                  String      @id @default(cuid())
+  taxType             String
+  operationType       String
+  effectiveFrom       DateTime
+  effectiveTo         DateTime?
+  version             Int
+  rate                Decimal
+  rateUnit            String
+  additionalRate      Decimal?
+  additionalRateUnit  String?
+  baseRule            String
+  legalBasis          String
+  conditions          Json
+  basePolicy          Json
+  status              RuleStatus  @default(needs_review)
+  createdBy           String?
+  reviewedBy          String?
+  createdAt           DateTime    @default(now())
+
+  @@index([taxType, operationType, effectiveFrom, effectiveTo])
+  @@unique([taxType, operationType, version])
+}
+
+model TenantContext {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
+  exceptions Json
+  regimes   Json
+  state     String?
+  createdAt DateTime @default(now())
+
+  @@index([tenantId])
+}
+
+model Operation {
+  id             String        @id @default(cuid())
+  tenantId       String
+  tenant         Tenant        @relation(fields: [tenantId], references: [id])
+  payload        Json
+  classifiedType String?
+  createdAt      DateTime      @default(now())
+  calculations   Calculation[]
+
+  @@index([tenantId])
+}
+
+model Calculation {
+  id        String    @id @default(cuid())
+  operationId String
+  operation  Operation @relation(fields: [operationId], references: [id])
+  asOfDate  DateTime
+  outcome   Json
+  createdAt DateTime  @default(now())
+
+  @@index([operationId])
+}
