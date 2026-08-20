@@ -1108,25 +1108,39 @@ td small {
 .batch-list,
 .job-list { display: grid; gap: 8px; }
 .batch-list > button,
-.job-list > div {
+.job-list > article {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #fff;
+}
+.job-summary {
   display: flex;
   align-items: center;
   gap: 10px;
   width: 100%;
   padding: 12px;
-  border: 1px solid var(--line);
-  border-radius: 9px;
   color: var(--ink);
-  background: #fff;
   text-align: left;
   transition: border-color 150ms ease-out, background 150ms ease-out;
 }
 .batch-list > button:hover { border-color: #9cbcaf; background: #f8fcfa; }
 .batch-list > button > span:first-child,
-.job-list > div > span:first-child { display: grid; min-width: 0; margin-right: auto; }
+.job-summary > span:first-child { display: grid; min-width: 0; margin-right: auto; }
 .batch-list small,
 .job-list small { color: var(--muted); font-size: 10px; }
 .job-list button { display: flex; align-items: center; gap: 5px; border: 0; color: var(--green); background: transparent; font-size: 10px; font-weight: 800; }
+.job-attempts { display: grid; gap: 0; padding: 0 12px 12px; border-top: 1px solid var(--line); background: #fafcfb; animation: review-enter 180ms cubic-bezier(0.16, 1, 0.3, 1); }
+.job-correlation { display: grid; gap: 3px; padding: 11px 0; color: var(--muted); font-size: 9px; text-transform: uppercase; }
+.job-correlation code,
+.job-attempt code { overflow-wrap: anywhere; color: #52605b; font-size: 9px; text-transform: none; }
+.job-attempt { display: grid; grid-template-columns: 12px minmax(0, 1fr) auto; align-items: start; gap: 9px; padding: 11px 0; border-top: 1px solid #e8eeeb; }
+.job-attempt > div { display: grid; gap: 3px; }
+.job-attempt p { margin: 4px 0 0; color: #8f332d; font-size: 10px; line-height: 1.45; }
+.attempt-dot { width: 8px; height: 8px; margin-top: 4px; border-radius: 50%; background: #85918c; }
+.attempt-dot.completed { background: var(--green); }
+.attempt-dot.failed { background: var(--danger); }
+.attempt-dot.active { background: #3458a1; }
 .calculate-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.12fr) minmax(330px, 0.88fr);

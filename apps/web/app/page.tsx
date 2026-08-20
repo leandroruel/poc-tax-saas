@@ -34,6 +34,7 @@ import type {
   Company as CompanyDto,
   DashboardOverview,
   BackgroundJob,
+  BackgroundJobDetail,
   ImportBatch,
   ImportBatchDetail,
   ImportMappingProfile,
@@ -1092,6 +1093,8 @@ function Imports({
   const [acknowledgedInvalidRows, setAcknowledgedInvalidRows] = React.useState(false);
   const [acknowledgedFailedRows, setAcknowledgedFailedRows] = React.useState(false);
   const [selectedProfileId, setSelectedProfileId] = React.useState("");
+  const [jobDetail, setJobDetail] = React.useState<BackgroundJobDetail | null>(null);
+  const [loadingJobId, setLoadingJobId] = React.useState<string | null>(null);
 
   const loadReviewRows = React.useCallback(
     async (batchId: string, afterRowNumber?: number) => {
@@ -1239,9 +1242,30 @@ function Imports({
     setError("");
     try {
       await api(`/api/jobs/${jobId}/retry`, { method: "POST" });
+      setJobDetail(null);
       await Promise.all([jobs.reload(), batches.reload(), refreshSelected()]);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Falha ao tentar novamente.");
+    }
+  }
+
+  async function toggleJobDetail(jobId: string) {
+    if (jobDetail?.id === jobId) {
+      setJobDetail(null);
+      return;
+    }
+    setLoadingJobId(jobId);
+    setError("");
+    try {
+      setJobDetail(await api<BackgroundJobDetail>(`/api/jobs/${jobId}`));
+    } catch (reason) {
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : "Falha ao carregar as tentativas do job.",
+      );
+    } finally {
+      setLoadingJobId(null);
     }
   }
 
@@ -1633,11 +1657,36 @@ function Imports({
         <Panel title="Jobs" subtitle="Tentativas, progresso e falhas técnicas.">
           {jobs.loading ? <Empty text="Carregando jobs..." /> : relatedJobs?.length ? (
             <div className="job-list">{relatedJobs.map((job) => (
-              <div key={job.id}>
-                <span><strong>{job.type === "imports.validate" ? "Validação" : "Cálculo em lote"}</strong><small>{job.attemptsMade}/{job.maxAttempts} tentativas</small></span>
-                <span className={`badge ${job.status}`}>{job.status}</span>
-                {job.status === "failed" && canRetry && <button onClick={() => void retry(job.id)}><RotateCcw size={13} /> Tentar novamente</button>}
-              </div>
+              <article key={job.id}>
+                <div className="job-summary">
+                  <span><strong>{job.type === "imports.validate" ? "Validação" : job.type === "imports.process" ? "Cálculo em lote" : "Exportação"}</strong><small>{job.attemptsMade}/{job.maxAttempts} tentativas</small></span>
+                  <span className={`badge ${job.status}`}>{job.status}</span>
+                  <button type="button" onClick={() => void toggleJobDetail(job.id)}>
+                    {loadingJobId === job.id ? "Carregando..." : jobDetail?.id === job.id ? "Ocultar" : "Detalhes"}
+                  </button>
+                  {job.status === "failed" && canRetry && <button type="button" onClick={() => void retry(job.id)}><RotateCcw size={13} /> Tentar novamente</button>}
+                </div>
+                {jobDetail?.id === job.id && (
+                  <div className="job-attempts">
+                    <div className="job-correlation">
+                      <span>Correlação do job</span>
+                      <code>{jobDetail.correlationId}</code>
+                    </div>
+                    {jobDetail.attempts.length ? jobDetail.attempts.map((attempt) => (
+                      <div className="job-attempt" key={attempt.id}>
+                        <span className={`attempt-dot ${attempt.status}`} />
+                        <div>
+                          <strong>Tentativa {attempt.number}</strong>
+                          <small>{new Date(attempt.startedAt).toLocaleString("pt-BR")}</small>
+                          <code>{attempt.correlationId}</code>
+                          {attempt.errorMessage && <p>{attempt.errorMessage}</p>}
+                        </div>
+                        <span className={`badge ${attempt.status}`}>{attempt.status}</span>
+                      </div>
+                    )) : <Empty text="Este job ainda não iniciou nenhuma tentativa." />}
+                  </div>
+                )}
+              </article>
             ))}</div>
           ) : <Empty text="Nenhum job para exibir." />}
         </Panel>

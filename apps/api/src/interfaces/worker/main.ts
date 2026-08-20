@@ -340,16 +340,45 @@ async function runTrackedJob(backgroundJobId: string, handler: () => Promise<voi
   const tracked = await beginTrackedAttempt(backgroundJobId);
   try {
     await handler();
-    await prisma.$transaction([
-      prisma.jobAttempt.update({
+    await prisma.$transaction(async (transaction) => {
+      await transaction.jobAttempt.update({
         where: { id: tracked.attemptId },
         data: { status: "completed", finishedAt: new Date() },
-      }),
-      prisma.backgroundJob.update({
+      });
+      await transaction.backgroundJob.update({
         where: { id: backgroundJobId },
         data: { status: "completed", finishedAt: new Date() },
-      }),
-    ]);
+      });
+      if (tracked.number > 1) {
+        await transaction.notification.create({
+          data: {
+            id: uuidv7(),
+            organizationId: tracked.job.organizationId,
+            userId: tracked.job.createdById,
+            type: "job_recovered",
+            title: "Processamento recuperado",
+            message: `O job foi concluído na tentativa ${tracked.number} de ${tracked.job.maxAttempts}.`,
+            entityType: "BackgroundJob",
+            entityId: backgroundJobId,
+          },
+        });
+        await transaction.auditLog.create({
+          data: {
+            id: uuidv7(),
+            actorUserId: tracked.job.createdById,
+            organizationId: tracked.job.organizationId,
+            action: "background_job.recovered",
+            entityType: "BackgroundJob",
+            entityId: backgroundJobId,
+            after: requiredJson({
+              status: "completed",
+              recoveredOnAttempt: tracked.number,
+              maxAttempts: tracked.job.maxAttempts,
+            }),
+          },
+        });
+      }
+    });
   } catch (error) {
     const finalFailure =
       error instanceof UnrecoverableError ||

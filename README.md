@@ -74,6 +74,7 @@ aplicação, sem depender de um provedor de nuvem.
 - Um lote processado termina em revisão: linhas inválidas e falhas são paginadas para o revisor, falhas podem ser reprocessadas e o encerramento exige reconhecimento explícito das pendências e uma nota auditável.
 - Lotes não podem ser cancelados enquanto validação ou cálculo ainda escrevem resultados. Fora desses estados, o cancelamento preserva o arquivo e a justificativa na trilha de auditoria.
 - Jobs com falha têm tentativas automáticas e retry manual autorizado; progresso, tentativas e erros permanecem consultáveis no dashboard.
+- Cada tentativa possui correlation ID e erro próprios. A recuperação em uma tentativa posterior gera notificação e evento de auditoria, preservando o histórico das falhas anteriores.
 - O histórico pode ser exportado em CSV compatível com Excel, com colunas e separador configuráveis, ou em JSON de evidência versionado. Os filtros e o instante de corte ficam registrados para que o resultado seja reproduzível.
 - Exportações são geradas pelo worker, armazenadas no Silo e baixadas somente por rota autenticada e escopada pelo tenant. Células CSV potencialmente interpretadas como fórmulas são neutralizadas.
 - O dashboard resume IOF apurado nos últimos 30 dias, resultados que exigem atenção e a atividade diária de 14 dias. A série usa a data de processamento no fuso de São Paulo e sempre filtra a organização autenticada.

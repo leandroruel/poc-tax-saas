@@ -319,6 +319,7 @@ describe("HTTP authentication boundary", () => {
         notifications,
         markNotificationRead: vi.fn(),
         jobs: vi.fn(),
+        job: vi.fn(),
       },
     });
     servers.push(server);
@@ -344,6 +345,7 @@ describe("HTTP authentication boundary", () => {
         notifications: vi.fn(),
         markNotificationRead,
         jobs: vi.fn(),
+        job: vi.fn(),
       },
     });
     servers.push(server);
@@ -372,6 +374,7 @@ describe("HTTP authentication boundary", () => {
         notifications: vi.fn(),
         markNotificationRead: vi.fn(),
         jobs,
+        job: vi.fn(),
       },
     });
     servers.push(server);
@@ -383,6 +386,31 @@ describe("HTTP authentication boundary", () => {
 
     expect(response.statusCode).toBe(200);
     expect(jobs).toHaveBeenCalledWith(authenticatedActor.tenantId, 25);
+  });
+
+  it("scopes job attempt details to the authenticated organization", async () => {
+    const job = vi.fn().mockResolvedValue(null);
+    const server = await buildServer({
+      authenticate: async () => authenticatedActor,
+      operationalQueries: {
+        notifications: vi.fn(),
+        markNotificationRead: vi.fn(),
+        jobs: vi.fn(),
+        job,
+      },
+    });
+    servers.push(server);
+
+    const response = await server.inject({
+      method: "GET",
+      url: "/api/jobs/job_from_another_tenant",
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(job).toHaveBeenCalledWith(
+      authenticatedActor.tenantId,
+      "job_from_another_tenant",
+    );
   });
 
   it("retries a failed job through the authenticated organization scope", async () => {

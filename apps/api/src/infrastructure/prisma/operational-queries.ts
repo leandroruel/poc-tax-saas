@@ -1,5 +1,44 @@
 import type { PrismaClient } from "@prisma/client";
-import type { OperationalQueries } from "../../application/ports/operational-queries.js";
+import type {
+  BackgroundJobView,
+  OperationalQueries,
+} from "../../application/ports/operational-queries.js";
+
+function jobView(job: {
+  id: string;
+  batchId: string | null;
+  exportId: string | null;
+  type: string;
+  status: BackgroundJobView["status"];
+  progressCurrent: number;
+  progressTotal: number;
+  attemptsMade: number;
+  maxAttempts: number;
+  correlationId: string;
+  lastErrorCode: string | null;
+  lastErrorMessage: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}): BackgroundJobView {
+  return {
+    id: job.id,
+    batchId: job.batchId,
+    exportId: job.exportId,
+    type: job.type,
+    status: job.status,
+    progress: {
+      current: job.progressCurrent,
+      total: job.progressTotal,
+    },
+    attemptsMade: job.attemptsMade,
+    maxAttempts: job.maxAttempts,
+    correlationId: job.correlationId,
+    lastErrorCode: job.lastErrorCode,
+    lastErrorMessage: job.lastErrorMessage,
+    createdAt: job.createdAt.toISOString(),
+    updatedAt: job.updatedAt.toISOString(),
+  };
+}
 
 export function createPrismaOperationalQueries(
   prisma: PrismaClient,
@@ -52,24 +91,27 @@ export function createPrismaOperationalQueries(
         orderBy: [{ createdAt: "desc" }, { id: "desc" }],
         take: limit,
       });
-      return jobs.map((job) => ({
-        id: job.id,
-        batchId: job.batchId,
-        exportId: job.exportId,
-        type: job.type,
-        status: job.status,
-        progress: {
-          current: job.progressCurrent,
-          total: job.progressTotal,
-        },
-        attemptsMade: job.attemptsMade,
-        maxAttempts: job.maxAttempts,
-        correlationId: job.correlationId,
-        lastErrorCode: job.lastErrorCode,
-        lastErrorMessage: job.lastErrorMessage,
-        createdAt: job.createdAt.toISOString(),
-        updatedAt: job.updatedAt.toISOString(),
-      }));
+      return jobs.map(jobView);
+    },
+    async job(tenantId, jobId) {
+      const job = await prisma.backgroundJob.findFirst({
+        where: { id: jobId, organizationId: tenantId },
+        include: { attempts: { orderBy: { number: "desc" } } },
+      });
+      if (!job) return null;
+      return {
+        ...jobView(job),
+        attempts: job.attempts.map((attempt) => ({
+          id: attempt.id,
+          number: attempt.number,
+          status: attempt.status,
+          correlationId: attempt.correlationId,
+          errorCode: attempt.errorCode,
+          errorMessage: attempt.errorMessage,
+          startedAt: attempt.startedAt.toISOString(),
+          finishedAt: attempt.finishedAt?.toISOString() ?? null,
+        })),
+      };
     },
   };
 }

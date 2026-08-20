@@ -70,6 +70,23 @@ export function registerOperationsRoutes(
     return queries.jobs(actor.tenantId, parsed.data.limit);
   });
 
+  app.get<{ Params: { jobId: string } }>(
+    "/api/jobs/:jobId",
+    async (request, reply) => {
+      const actor = await requireOrganizationPermission(
+        authenticate,
+        request.headers,
+        reply,
+        "job:read",
+      );
+      if (!actor) return;
+      const job = await queries.job(actor.tenantId, request.params.jobId);
+      return job
+        ? reply.send(job)
+        : reply.status(404).send({ error: "background_job_not_found" });
+    },
+  );
+
   app.post<{ Params: { jobId: string } }>(
     "/api/jobs/:jobId/retry",
     async (request, reply) => {

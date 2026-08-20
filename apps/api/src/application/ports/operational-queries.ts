@@ -40,6 +40,19 @@ export interface BackgroundJobView {
   readonly updatedAt: string;
 }
 
+export interface BackgroundJobDetail extends BackgroundJobView {
+  readonly attempts: readonly {
+    readonly id: string;
+    readonly number: number;
+    readonly status: "active" | "completed" | "failed";
+    readonly correlationId: string;
+    readonly errorCode: string | null;
+    readonly errorMessage: string | null;
+    readonly startedAt: string;
+    readonly finishedAt: string | null;
+  }[];
+}
+
 export interface OperationalQueries {
   notifications(input: {
     tenantId: string;
@@ -55,4 +68,5 @@ export interface OperationalQueries {
     notificationId: string;
   }): Promise<boolean>;
   jobs(tenantId: string, limit: number): Promise<readonly BackgroundJobView[]>;
+  job(tenantId: string, jobId: string): Promise<BackgroundJobDetail | null>;
 }

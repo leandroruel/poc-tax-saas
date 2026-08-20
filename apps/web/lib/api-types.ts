@@ -220,6 +220,19 @@ export type BackgroundJob = {
   updatedAt: string;
 };
 
+export type BackgroundJobDetail = BackgroundJob & {
+  attempts: {
+    id: string;
+    number: number;
+    status: "active" | "completed" | "failed";
+    correlationId: string;
+    errorCode: string | null;
+    errorMessage: string | null;
+    startedAt: string;
+    finishedAt: string | null;
+  }[];
+};
+
 export type CalculationExportColumn =
   | "calculationId"
   | "operationType"
