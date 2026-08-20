@@ -201,6 +201,31 @@ describe("HTTP authentication boundary", () => {
     expect(response.json()).toEqual({ error: "unauthenticated" });
   });
 
+  it("completes the invited user's encrypted profile through user authentication", async () => {
+    const completeUserProfile = vi.fn();
+    const server = await buildServer({
+      authenticateUser: async () => ({
+        userId: "invited_user",
+        sessionId: "session_01",
+        isPlatformAdmin: false,
+      }),
+      completeUserProfile,
+    });
+    servers.push(server);
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/api/profile",
+      payload: { cpf: "529.982.247-25" },
+    });
+
+    expect(response.statusCode).toBe(204);
+    expect(completeUserProfile).toHaveBeenCalledWith({
+      userId: "invited_user",
+      cpf: "529.982.247-25",
+    });
+  });
+
   it("forbids tenant users from the global rule administration", async () => {
     const server = await buildServer({
       authenticateUser: async () => ({
@@ -346,6 +371,49 @@ describe("HTTP authentication boundary", () => {
     expect(response.statusCode).toBe(400);
     expect(response.json()).toEqual({ error: "invalid_cursor" });
     expect(list).not.toHaveBeenCalled();
+  });
+
+  it("updates team roles through the authenticated organization and actor", async () => {
+    const updateRole = vi.fn().mockResolvedValue("updated");
+    const server = await buildServer({
+      authenticate: async () => authenticatedActor,
+      teamManagement: { updateRole, remove: vi.fn() },
+    });
+    servers.push(server);
+
+    const response = await server.inject({
+      method: "PATCH",
+      url: "/api/team/members/member_02/role",
+      payload: { role: "reviewer" },
+    });
+
+    expect(response.statusCode).toBe(204);
+    expect(updateRole).toHaveBeenCalledWith({
+      tenantId: authenticatedActor.tenantId,
+      actorUserId: authenticatedActor.userId,
+      memberId: "member_02",
+      role: "reviewer",
+    });
+  });
+
+  it("prevents operators from managing team members", async () => {
+    const remove = vi.fn();
+    const server = await buildServer({
+      authenticate: async () => ({
+        ...authenticatedActor,
+        organizationRole: "operator",
+      }),
+      teamManagement: { updateRole: vi.fn(), remove },
+    });
+    servers.push(server);
+
+    const response = await server.inject({
+      method: "DELETE",
+      url: "/api/team/members/member_02",
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(remove).not.toHaveBeenCalled();
   });
 
   it("scopes notifications to both the organization and signed-in user", async () => {

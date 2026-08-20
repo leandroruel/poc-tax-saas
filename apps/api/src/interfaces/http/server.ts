@@ -17,6 +17,7 @@ import type { RuleAdministration } from "../../application/ports/rule-administra
 import type { BackgroundJobOperations } from "../../application/ports/background-job-operations.js";
 import type { OperationalQueries } from "../../application/ports/operational-queries.js";
 import type { TenantQueries } from "../../application/ports/tenant-queries.js";
+import type { TeamManagement } from "../../application/ports/team-management.js";
 import {
   createCalculationExportWorkflow,
   type CalculationExportWorkflow,
@@ -25,6 +26,10 @@ import {
   createOnboardCompany,
   type OnboardCompany,
 } from "../../application/onboard-company.js";
+import {
+  createCompleteUserProfile,
+  type CompleteUserProfile,
+} from "../../application/complete-user-profile.js";
 import { createPrismaCalculationJournal } from "../../infrastructure/prisma/calculation-journal.js";
 import { createPrismaAuditTrail } from "../../infrastructure/prisma/audit-trail.js";
 import { createPrismaCalculationExportRepository } from "../../infrastructure/prisma/calculation-export-repository.js";
@@ -36,11 +41,13 @@ import {
   authenticateWithBetterAuth,
 } from "../../infrastructure/auth/better-auth-authenticator.js";
 import { createPrismaOnboardingStore } from "../../infrastructure/prisma/onboarding-store.js";
+import { createPrismaUserProfileStore } from "../../infrastructure/prisma/user-profile-store.js";
 import { createPrismaOperationalQueries } from "../../infrastructure/prisma/operational-queries.js";
 import { createPrismaBackgroundJobOperations } from "../../infrastructure/prisma/background-job-operations.js";
 import { createPrismaImportBatchRepository } from "../../infrastructure/prisma/import-batch-repository.js";
 import { createPrismaRuleAdministration } from "../../infrastructure/prisma/rule-administration.js";
 import { createPrismaTenantQueries } from "../../infrastructure/prisma/tenant-queries.js";
+import { createPrismaTeamManagement } from "../../infrastructure/prisma/team-management.js";
 import { createEnvironmentTaxIdVault } from "../../infrastructure/security/tax-id-vault.js";
 import { createEnvironmentS3ObjectStorage } from "../../infrastructure/storage/s3-object-storage.js";
 import { registerAuthRoutes } from "./routes/auth.routes.js";
@@ -52,6 +59,7 @@ import { registerImportBatchRoutes } from "./routes/import-batch.routes.js";
 import { registerTaxRoutes } from "./routes/tax.routes.js";
 import { registerCalculationExportRoutes } from "./routes/calculation-export.routes.js";
 import { registerAuditRoutes } from "./routes/audit.routes.js";
+import { registerTeamRoutes } from "./routes/team.routes.js";
 
 interface ServerDependencies {
   readonly authenticate: AuthenticateRequest;
@@ -60,12 +68,14 @@ interface ServerDependencies {
   readonly calculationLedger: CalculationLedger;
   readonly calculateTax: CalculateTax;
   readonly calculationExports: CalculationExportWorkflow;
+  readonly completeUserProfile: CompleteUserProfile;
   readonly importBatches: ImportBatchWorkflow;
   readonly jobOperations: BackgroundJobOperations;
   readonly onboardCompany: OnboardCompany;
   readonly operationalQueries: OperationalQueries;
   readonly ruleAdministration: RuleAdministration;
   readonly tenantQueries: TenantQueries;
+  readonly teamManagement: TeamManagement;
 }
 
 function createProductionDependencies(
@@ -90,6 +100,12 @@ function createProductionDependencies(
         repository: createPrismaCalculationExportRepository(prisma),
         storage: createEnvironmentS3ObjectStorage(),
       }),
+    completeUserProfile:
+      overrides.completeUserProfile ??
+      createCompleteUserProfile({
+        store: createPrismaUserProfileStore(prisma),
+        taxIdVault: createEnvironmentTaxIdVault(),
+      }),
     importBatches:
       overrides.importBatches ??
       createImportBatchWorkflow({
@@ -110,6 +126,8 @@ function createProductionDependencies(
       overrides.ruleAdministration ?? createPrismaRuleAdministration(prisma),
     tenantQueries:
       overrides.tenantQueries ?? createPrismaTenantQueries(prisma),
+    teamManagement:
+      overrides.teamManagement ?? createPrismaTeamManagement(prisma),
   };
 }
 
@@ -145,6 +163,7 @@ export async function buildServer(overrides: Partial<ServerDependencies> = {}) {
     app,
     dependencies.authenticateUser,
     dependencies.onboardCompany,
+    dependencies.completeUserProfile,
   );
   registerOperationsRoutes(
     app,
@@ -166,6 +185,11 @@ export async function buildServer(overrides: Partial<ServerDependencies> = {}) {
     app,
     dependencies.authenticate,
     dependencies.auditTrail,
+  );
+  registerTeamRoutes(
+    app,
+    dependencies.authenticate,
+    dependencies.teamManagement,
   );
   registerTaxRoutes(app, dependencies.calculateTax, dependencies.authenticate);
 

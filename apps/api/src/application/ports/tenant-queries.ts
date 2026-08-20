@@ -28,6 +28,7 @@ export interface UserContextView {
   readonly email: string;
   readonly platformRole: "user" | "super_admin";
   readonly onboardingRequired: boolean;
+  readonly profileRequired: boolean;
   readonly membership: null | {
     readonly role: OrganizationRole;
     readonly permissions: readonly OrganizationPermission[];

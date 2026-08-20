@@ -58,6 +58,9 @@ aplicação, sem depender de um provedor de nuvem.
 ## Decisões importantes
 
 - Better Auth `Organization` é o tenant canônico; um usuário possui no máximo um `Member` por constraint de banco.
+- Owners e administradores podem criar convites locais para papéis `admin`, `operator` e `reviewer`. O aceite respeita o vínculo único por usuário e exige a conclusão do perfil cadastral criptografado.
+- Convites do ambiente local usam links opacos copiáveis e não verificam o e-mail. Verificação de e-mail e entrega transacional são gates obrigatórios antes de qualquer publicação externa.
+- Alteração de papel e remoção de membro são transacionais e auditadas com o ator real; owner e a própria conta são protegidos contra essas operações.
 - O cliente nunca envia `tenantId`; a API o deriva da organização ativa da sessão.
 - CPF reside em `UserProfile`, protegido por AES-256-GCM e índice cego HMAC-SHA256. A API não devolve CPF.
 - Cálculos e logs de auditoria são append-only; um recálculo cria novo registro relacionado e só pode apontar para um cálculo do mesmo tenant.

@@ -22,6 +22,7 @@ export type Me = {
   email: string;
   platformRole: "user" | "super_admin";
   onboardingRequired: boolean;
+  profileRequired: boolean;
   membership: null | {
     role: OrganizationRole;
     permissions: OrganizationPermission[];

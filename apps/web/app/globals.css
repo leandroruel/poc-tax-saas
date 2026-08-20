@@ -1263,6 +1263,78 @@ td small {
 .member .badge {
   margin-left: auto;
 }
+.member-actions {
+  display: flex !important;
+  grid-auto-flow: column;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+.member-actions select {
+  min-width: 140px;
+}
+.member-actions button {
+  border: 0;
+  color: #9b3c35;
+  background: transparent;
+  font-size: 10px;
+  font-weight: 800;
+}
+.invitation-acceptance {
+  display: grid;
+  gap: 18px;
+}
+.invitation-acceptance .button {
+  width: 100%;
+}
+.team-invite-form {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) 220px auto;
+  align-items: end;
+  gap: 12px;
+}
+.invite-link-result {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 16px;
+  padding: 12px;
+  border: 1px solid #cfe0d8;
+  border-radius: 9px;
+  background: #f8fcfa;
+}
+.invite-link-result code {
+  flex: 1;
+  overflow-wrap: anywhere;
+  font-size: 10px;
+}
+.pending-invitations {
+  display: grid;
+  gap: 8px;
+  margin-top: 16px;
+}
+.pending-invitations > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 0;
+  border-top: 1px solid var(--line);
+}
+.pending-invitations span {
+  display: grid;
+}
+.pending-invitations small {
+  color: var(--muted);
+  font-size: 10px;
+}
+.pending-invitations button {
+  border: 0;
+  color: #9b3c35;
+  background: transparent;
+  font-size: 10px;
+  font-weight: 800;
+}
 .rule-list article {
   border: 1px solid var(--line);
   border-radius: 10px;
@@ -1409,6 +1481,14 @@ td small {
   .calculation-detail-grid,
   .calculation-result-detail {
     grid-template-columns: 1fr;
+  }
+  .team-invite-form {
+    grid-template-columns: 1fr;
+  }
+  .invite-link-result,
+  .pending-invitations > div {
+    align-items: stretch;
+    flex-direction: column;
   }
   .export-format-grid,
   .column-checks {

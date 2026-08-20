@@ -126,8 +126,8 @@ function useApiQuery<T>(path: string) {
   return { data, error, loading, reload };
 }
 
-function AuthScreen() {
-  const [creating, setCreating] = React.useState(false);
+function AuthScreen({ invitationId }: { invitationId: string | null }) {
+  const [creating, setCreating] = React.useState(Boolean(invitationId));
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState("");
 
@@ -151,7 +151,19 @@ function AuthScreen() {
         setError(result.error.message ?? "Credenciais inválidas.");
         return;
       }
-      window.location.reload();
+      if (invitationId) {
+        const accepted = await authClient.organization.acceptInvitation({
+          invitationId,
+        });
+        if (accepted.error) {
+          setError(
+            accepted.error.message ??
+              "Não foi possível aceitar o convite com esta conta.",
+          );
+          return;
+        }
+      }
+      window.location.href = invitationId ? "/" : window.location.href;
     } catch {
       setError("Serviço de autenticação indisponível. Tente novamente.");
     } finally {
@@ -185,12 +197,24 @@ function AuthScreen() {
         <form className="auth-form" onSubmit={submit}>
           <div>
             <span className="step-caption">
-              {creating ? "Etapa 1 de 4" : "Acesso seguro"}
+              {invitationId
+                ? "Convite empresarial"
+                : creating
+                  ? "Etapa 1 de 4"
+                  : "Acesso seguro"}
             </span>
-            <h2>{creating ? "Crie sua conta" : "Bem-vindo de volta"}</h2>
+            <h2>
+              {invitationId
+                ? "Entre para aceitar o convite"
+                : creating
+                  ? "Crie sua conta"
+                  : "Bem-vindo de volta"}
+            </h2>
             <p>
               {creating
-                ? "Depois, cadastraremos sua empresa."
+                ? invitationId
+                  ? "Use o e-mail que recebeu o convite. Depois, concluiremos seus dados cadastrais."
+                  : "Depois, cadastraremos sua empresa."
                 : "Entre para acessar o workspace da sua empresa."}
             </p>
           </div>
@@ -226,6 +250,84 @@ function AuthScreen() {
             {creating ? "Já tenho uma conta" : "Criar conta empresarial"}
           </button>
         </form>
+      </section>
+    </main>
+  );
+}
+
+function InvitationAcceptance({ invitationId }: { invitationId: string }) {
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState("");
+  async function accept() {
+    setBusy(true);
+    setError("");
+    try {
+      const result = await authClient.organization.acceptInvitation({
+        invitationId,
+      });
+      if (result.error) {
+        setError(
+          result.error.message ?? "Não foi possível aceitar este convite.",
+        );
+        setBusy(false);
+        return;
+      }
+      window.location.href = "/";
+    } catch {
+      setError(
+        "Serviço de autenticação indisponível. Tente novamente.",
+      );
+      setBusy(false);
+    }
+  }
+  return (
+    <main className="onboarding-shell">
+      <div className="brand dark"><span className="brand-mark"><Scale size={22} /></span> TaxMan</div>
+      <section className="onboarding-card invitation-acceptance">
+        <span className="eyebrow">Convite empresarial</span>
+        <h1>Você foi convidado para um workspace</h1>
+        <p>O aceite vincula sua conta a esta empresa. Cada usuário pode pertencer a somente uma organização.</p>
+        {error && <p className="form-error">{error}</p>}
+        <Button disabled={busy} onClick={() => void accept()}>
+          {busy ? "Aceitando..." : "Aceitar convite"}
+        </Button>
+      </section>
+    </main>
+  );
+}
+
+function ProfileCompletion({ me }: { me: Me }) {
+  const [cpf, setCpf] = React.useState("");
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState("");
+  async function finish() {
+    setBusy(true);
+    setError("");
+    try {
+      await api("/api/profile", {
+        method: "POST",
+        body: JSON.stringify({ cpf }),
+      });
+      window.location.href = "/";
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Falha ao salvar o perfil.");
+      setBusy(false);
+    }
+  }
+  return (
+    <main className="onboarding-shell">
+      <div className="brand dark"><span className="brand-mark"><Scale size={22} /></span> TaxMan</div>
+      <section className="onboarding-card invitation-acceptance">
+        <span className="eyebrow">Última etapa</span>
+        <h1>Complete seus dados cadastrais</h1>
+        <p>Olá, {me.name}. Seu CPF será criptografado e não será devolvido pela API.</p>
+        <Field label="CPF">
+          <Input value={cpf} onChange={(event) => setCpf(event.target.value)} placeholder="000.000.000-00" autoFocus />
+        </Field>
+        {error && <p className="form-error">{error}</p>}
+        <Button disabled={busy || !cpf} onClick={() => void finish()}>
+          {busy ? "Protegendo seus dados..." : "Concluir e acessar"}
+        </Button>
       </section>
     </main>
   );
@@ -1923,9 +2025,97 @@ function Imports({
   );
 }
 
-function Company() {
-  const { data: company, error, loading } =
+type PendingInvitation = {
+  id: string;
+  email: string;
+  role: string;
+  status: string;
+  expiresAt: Date | string;
+};
+
+function Company({
+  canManage,
+  currentUserId,
+}: {
+  canManage: boolean;
+  currentUserId: string;
+}) {
+  const { data: company, error, loading, reload } =
     useApiQuery<CompanyDto>("/api/company");
+  const [invitations, setInvitations] = React.useState<PendingInvitation[]>([]);
+  const [teamError, setTeamError] = React.useState("");
+  const [busy, setBusy] = React.useState(false);
+  const [inviteLink, setInviteLink] = React.useState("");
+  const [copied, setCopied] = React.useState(false);
+
+  const reloadInvitations = React.useCallback(async () => {
+    if (!canManage) return;
+    const result = await authClient.organization.listInvitations();
+    if (result.error) {
+      setTeamError(result.error.message ?? "Falha ao carregar convites.");
+      return;
+    }
+    setInvitations((result.data ?? []) as PendingInvitation[]);
+  }, [canManage]);
+
+  React.useEffect(() => {
+    void reloadInvitations();
+  }, [reloadInvitations]);
+
+  async function invite(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBusy(true);
+    setTeamError("");
+    const form = new FormData(event.currentTarget);
+    const result = await authClient.organization.inviteMember({
+      email: String(form.get("email")),
+      role: String(form.get("role")) as "admin" | "operator" | "reviewer",
+    });
+    if (result.error || !result.data) {
+      setTeamError(result.error?.message ?? "Não foi possível criar o convite.");
+      setBusy(false);
+      return;
+    }
+    setInviteLink(`${window.location.origin}/?invitation=${result.data.id}`);
+    setCopied(false);
+    event.currentTarget.reset();
+    await reloadInvitations();
+    setBusy(false);
+  }
+
+  async function cancelInvitation(invitationId: string) {
+    setTeamError("");
+    const result = await authClient.organization.cancelInvitation({ invitationId });
+    if (result.error) setTeamError(result.error.message ?? "Falha ao cancelar convite.");
+    else await reloadInvitations();
+  }
+
+  async function updateMemberRole(
+    memberId: string,
+    role: "admin" | "operator" | "reviewer",
+  ) {
+    setTeamError("");
+    try {
+      await api(`/api/team/members/${memberId}/role`, {
+        method: "PATCH",
+        body: JSON.stringify({ role }),
+      });
+      await reload();
+    } catch (reason) {
+      setTeamError(reason instanceof Error ? reason.message : "Falha ao alterar o papel.");
+    }
+  }
+
+  async function removeMember(memberId: string) {
+    if (!window.confirm("Remover este usuário do workspace?")) return;
+    setTeamError("");
+    try {
+      await api(`/api/team/members/${memberId}`, { method: "DELETE" });
+      await reload();
+    } catch (reason) {
+      setTeamError(reason instanceof Error ? reason.message : "Falha ao remover usuário.");
+    }
+  }
   return (
     <>
       <div className="page-heading">
@@ -1952,9 +2142,29 @@ function Company() {
                   <strong>{member.user.name}</strong>
                   <small>{member.user.email}</small>
                 </div>
-                <span className="badge neutral">
-                  {organizationRoleLabel(member.role)}
-                </span>
+                {canManage && member.role !== "owner" && member.user.id !== currentUserId ? (
+                  <div className="member-actions">
+                    <Select
+                      aria-label={`Papel de ${member.user.name}`}
+                      value={member.role}
+                      onChange={(event) =>
+                        void updateMemberRole(
+                          member.id,
+                          event.target.value as "admin" | "operator" | "reviewer",
+                        )
+                      }
+                    >
+                      <option value="operator">Operador</option>
+                      <option value="reviewer">Revisor</option>
+                      <option value="admin">Administrador</option>
+                    </Select>
+                    <button type="button" onClick={() => void removeMember(member.id)}>Remover</button>
+                  </div>
+                ) : (
+                  <span className="badge neutral">
+                    {organizationRoleLabel(member.role)}
+                  </span>
+                )}
               </div>
             ))}
           </div>
@@ -1962,6 +2172,49 @@ function Company() {
           <Empty text="Carregando empresa..." />
         )}
       </Panel>
+      {canManage && (
+        <Panel title="Convidar usuário" subtitle="No ambiente local, compartilhe o link copiável com o destinatário do e-mail informado.">
+          <form className="team-invite-form" onSubmit={invite}>
+            <Field label="E-mail do usuário"><Input name="email" type="email" required /></Field>
+            <Field label="Papel inicial">
+              <Select name="role" defaultValue="operator">
+                <option value="operator">Operador</option>
+                <option value="reviewer">Revisor</option>
+                <option value="admin">Administrador</option>
+              </Select>
+            </Field>
+            <Button disabled={busy}>{busy ? "Criando..." : "Criar convite"}</Button>
+          </form>
+          {inviteLink && (
+            <div className="invite-link-result">
+              <code>{inviteLink}</code>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() =>
+                  void navigator.clipboard.writeText(inviteLink).then(() => {
+                    setCopied(true);
+                    window.setTimeout(() => setCopied(false), 2_000);
+                  })
+                }
+              >
+                {copied ? "Link copiado" : "Copiar link"}
+              </Button>
+            </div>
+          )}
+          {teamError && <p className="form-error">{teamError}</p>}
+          {invitations.some((invitation) => invitation.status === "pending") && (
+            <div className="pending-invitations">
+              {invitations.filter((invitation) => invitation.status === "pending").map((invitation) => (
+                <div key={invitation.id}>
+                  <span><strong>{invitation.email}</strong><small>{organizationRoleLabel(invitation.role as OrganizationRole)} · expira em {new Date(invitation.expiresAt).toLocaleString("pt-BR")}</small></span>
+                  <button type="button" onClick={() => void cancelInvitation(invitation.id)}>Cancelar</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </Panel>
+      )}
     </>
   );
 }
@@ -1976,6 +2229,12 @@ const auditCategoryLabels: Record<AuditCategory, string> = {
 
 const auditActionLabels: Record<string, string> = {
   "organization.onboarded": "Empresa cadastrada",
+  "organization.profile_completed": "Perfil cadastral concluído",
+  "organization.invitation_created": "Convite criado",
+  "organization.invitation_accepted": "Convite aceito",
+  "organization.invitation_cancelled": "Convite cancelado",
+  "organization.member_role_updated": "Papel de usuário alterado",
+  "organization.member_removed": "Usuário removido",
   "calculation.created": "Cálculo registrado",
   "import.batch_uploaded": "Arquivo importado",
   "import.validation_requested": "Validação solicitada",
@@ -2411,6 +2670,7 @@ function Dashboard({ me }: { me: Me }) {
   const canRetryJob = permissions.includes("job:retry");
   const canExport = permissions.includes("export:create");
   const canReadAudit = permissions.includes("audit:read");
+  const canManageTeam = permissions.includes("team:manage");
   const nav: { id: Section; label: string; icon: LucideIcon }[] = [
     { id: "overview", label: "Visão geral", icon: LayoutDashboard },
     { id: "history", label: "Histórico", icon: FileClock },
@@ -2530,7 +2790,9 @@ function Dashboard({ me }: { me: Me }) {
               canRetry={canRetryJob}
             />
           )}
-          {section === "company" && <Company />}
+          {section === "company" && (
+            <Company canManage={canManageTeam} currentUserId={me.id} />
+          )}
           {section === "activity" && <OrganizationAudit />}
           {section === "rules" && <Rules />}
           {section === "audit" && <Rules audit />}
@@ -2545,6 +2807,11 @@ export default function Page() {
   const [me, setMe] = React.useState<Me | null>(null);
   const [loadingMe, setLoadingMe] = React.useState(true);
   const [meError, setMeError] = React.useState("");
+  const [invitationId] = React.useState<string | null>(() =>
+    typeof window === "undefined"
+      ? null
+      : new URLSearchParams(window.location.search).get("invitation"),
+  );
   React.useEffect(() => {
     if (!session.data) {
       setLoadingMe(false);
@@ -2572,13 +2839,17 @@ export default function Page() {
         <strong>TaxMan</strong>
       </div>
     );
-  if (!session.data) return <AuthScreen />;
+  if (!session.data) return <AuthScreen invitationId={invitationId} />;
   if (meError || !me)
     return (
       <div className="loading-screen">
         {meError || "Não foi possível carregar seu perfil."}
       </div>
     );
+  if (invitationId) {
+    return <InvitationAcceptance invitationId={invitationId} />;
+  }
   if (me.onboardingRequired) return <Onboarding me={me} />;
+  if (me.profileRequired) return <ProfileCompletion me={me} />;
   return <Dashboard me={me} />;
 }

@@ -52,6 +52,7 @@ export function createPrismaTenantQueries(prisma: PrismaClient): TenantQueries {
           name: true,
           email: true,
           platformRole: true,
+          profile: { select: { userId: true } },
           membership: {
             select: {
               role: true,
@@ -63,12 +64,20 @@ export function createPrismaTenantQueries(prisma: PrismaClient): TenantQueries {
         },
       });
       if (!user.membership) {
-        return { ...user, membership: null, onboardingRequired: true };
+        return {
+          ...user,
+          profile: undefined,
+          membership: null,
+          onboardingRequired: true,
+          profileRequired: false,
+        };
       }
       const role = requiredRole(user.membership.role);
       return {
         ...user,
+        profile: undefined,
         onboardingRequired: false,
+        profileRequired: !user.profile,
         membership: {
           ...user.membership,
           role,
