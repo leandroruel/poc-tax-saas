@@ -23,6 +23,10 @@ import { authClient } from "@/lib/auth-client";
 import { Button } from "@/components/ui/button";
 import { Input, Select } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  CalculationExports,
+  type CalculationExportFilters,
+} from "@/components/calculation-exports";
 import type {
   CalculationPage,
   CalculationRecord,
@@ -810,13 +814,15 @@ const calculationStatusLabels: Record<CalculationStatus, string> = {
   ambiguous_rule: "Regra ambígua",
 };
 
-function History() {
+function History({ canExport }: { canExport: boolean }) {
   const [path, setPath] = React.useState("/api/calculations?limit=25");
   const { data, error, loading } = useApiQuery<CalculationPage>(path);
   const [rows, setRows] = React.useState<CalculationRecord[]>([]);
   const [nextCursor, setNextCursor] = React.useState<string | null>(null);
   const [loadingMore, setLoadingMore] = React.useState(false);
   const [pageError, setPageError] = React.useState("");
+  const [activeFilters, setActiveFilters] =
+    React.useState<CalculationExportFilters>({});
 
   React.useEffect(() => {
     if (!data) return;
@@ -828,19 +834,25 @@ function History() {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     const params = new URLSearchParams({ limit: "25" });
-    for (const key of [
-      "calculationId",
-      "operationType",
-      "status",
-      "occurredFrom",
-      "occurredTo",
-    ]) {
-      const value = String(form.get(key) ?? "").trim();
-      if (value) params.set(key, value);
-    }
+    const calculationId = String(form.get("calculationId") ?? "").trim();
+    const operationType = String(form.get("operationType") ?? "").trim();
+    const status = String(form.get("status") ?? "").trim();
+    const occurredFrom = String(form.get("occurredFrom") ?? "").trim();
+    const occurredTo = String(form.get("occurredTo") ?? "").trim();
+    const nextFilters: CalculationExportFilters = {
+      ...(calculationId ? { calculationId } : {}),
+      ...(operationType
+        ? { operationType: operationType as CalculationExportFilters["operationType"] }
+        : {}),
+      ...(status ? { status: status as CalculationExportFilters["status"] } : {}),
+      ...(occurredFrom ? { occurredFrom } : {}),
+      ...(occurredTo ? { occurredTo } : {}),
+    };
+    for (const [key, value] of Object.entries(nextFilters)) params.set(key, value);
     setRows([]);
     setNextCursor(null);
     setPageError("");
+    setActiveFilters(nextFilters);
     setPath(`/api/calculations?${params.toString()}`);
   }
 
@@ -937,6 +949,7 @@ function History() {
           <Empty text="Nenhum cálculo encontrado." />
         )}
       </Panel>
+      <CalculationExports filters={activeFilters} canCreate={canExport} />
     </>
   );
 }
@@ -1560,6 +1573,7 @@ function Dashboard({ me }: { me: Me }) {
   const canCreateCalculation = permissions.includes("calculation:create");
   const canCreateBatch = permissions.includes("batch:create");
   const canRetryJob = permissions.includes("job:retry");
+  const canExport = permissions.includes("export:create");
   const nav: { id: Section; label: string; icon: LucideIcon }[] = [
     { id: "overview", label: "Visão geral", icon: LayoutDashboard },
     { id: "history", label: "Histórico", icon: FileClock },
@@ -1662,7 +1676,7 @@ function Dashboard({ me }: { me: Me }) {
           {section === "calculate" && (
             <Calculate segment={organization.segment} />
           )}
-          {section === "history" && <History />}
+          {section === "history" && <History canExport={canExport} />}
           {section === "imports" && (
             <Imports
               segment={organization.segment}

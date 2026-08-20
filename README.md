@@ -71,6 +71,8 @@ aplicação, sem depender de um provedor de nuvem.
 - A importação CSV usa um assistente de quatro etapas: upload, mapeamento de colunas, validação e cálculo em chunks. Arquivos idênticos são deduplicados por tenant e hash.
 - Cada linha válida reutiliza o mesmo caso de uso do cálculo individual. O vínculo linha↔cálculo é atômico, permitindo retomada sem duplicar registros.
 - Jobs com falha têm tentativas automáticas e retry manual autorizado; progresso, tentativas e erros permanecem consultáveis no dashboard.
+- O histórico pode ser exportado em CSV compatível com Excel, com colunas e separador configuráveis, ou em JSON de evidência versionado. Os filtros e o instante de corte ficam registrados para que o resultado seja reproduzível.
+- Exportações são geradas pelo worker, armazenadas no Silo e baixadas somente por rota autenticada e escopada pelo tenant. Células CSV potencialmente interpretadas como fórmulas são neutralizadas.
 
 Veja [o mapa do domínio](apps/api/src/domain/README.md) para localizar rapidamente cada regra de negócio.
 

@@ -10,7 +10,9 @@ export type OrganizationPermission =
   | "batch:review"
   | "job:read"
   | "job:retry"
-  | "notification:read";
+  | "notification:read"
+  | "export:read"
+  | "export:create";
 export type TenantSegment = "credit_provider" | "insurance_pension";
 
 export type Me = {
@@ -155,6 +157,7 @@ export type ImportBatchDetail = ImportBatch & {
 export type BackgroundJob = {
   id: string;
   batchId: string | null;
+  exportId: string | null;
   type: string;
   status: "queued" | "active" | "retrying" | "completed" | "failed" | "cancelled";
   progress: { current: number; total: number };
@@ -165,4 +168,38 @@ export type BackgroundJob = {
   lastErrorMessage: string | null;
   createdAt: string;
   updatedAt: string;
+};
+
+export type CalculationExportColumn =
+  | "calculationId"
+  | "operationType"
+  | "occurredOn"
+  | "status"
+  | "taxAmount"
+  | "taxableBase"
+  | "grossBase"
+  | "ruleId"
+  | "ruleVersion"
+  | "legalBasis"
+  | "createdAt"
+  | "createdBy";
+
+export type CalculationExport = {
+  id: string;
+  status: "queued" | "ready" | "failed";
+  format: "csv" | "evidence_json";
+  columns: CalculationExportColumn[];
+  filters: {
+    calculationId?: string;
+    operationType?: CalculationOperationType;
+    status?: CalculationStatus;
+    occurredFrom?: string;
+    occurredTo?: string;
+    createdThrough: string;
+  };
+  fileName: string | null;
+  rowCount: number;
+  errorMessage: string | null;
+  createdAt: string;
+  readyAt: string | null;
 };
