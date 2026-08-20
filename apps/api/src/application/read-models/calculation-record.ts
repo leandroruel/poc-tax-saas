@@ -44,6 +44,8 @@ export interface CalculationListFilters {
   readonly status?: CalculationStatus;
   readonly occurredFrom?: string;
   readonly occurredTo?: string;
+  /** Inclusive UTC boundary used to keep asynchronous exports reproducible. */
+  readonly createdThrough?: string;
 }
 
 export interface CalculationPage {

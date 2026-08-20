@@ -11,7 +11,9 @@ export type OrganizationPermission =
   | "batch:review"
   | "job:read"
   | "job:retry"
-  | "notification:read";
+  | "notification:read"
+  | "export:read"
+  | "export:create";
 
 const permissionsByRole = {
   owner: [
@@ -26,6 +28,8 @@ const permissionsByRole = {
     "job:read",
     "job:retry",
     "notification:read",
+    "export:read",
+    "export:create",
   ],
   admin: [
     "dashboard:read",
@@ -39,6 +43,8 @@ const permissionsByRole = {
     "job:read",
     "job:retry",
     "notification:read",
+    "export:read",
+    "export:create",
   ],
   operator: [
     "dashboard:read",
@@ -50,6 +56,8 @@ const permissionsByRole = {
     "job:read",
     "job:retry",
     "notification:read",
+    "export:read",
+    "export:create",
   ],
   reviewer: [
     "dashboard:read",
@@ -59,6 +67,8 @@ const permissionsByRole = {
     "batch:review",
     "job:read",
     "notification:read",
+    "export:read",
+    "export:create",
   ],
 } as const satisfies Record<OrganizationRole, readonly OrganizationPermission[]>;
 

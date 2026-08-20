@@ -261,6 +261,7 @@ describe("HTTP authentication boundary", () => {
       status: "calculated",
       occurredFrom: "2025-01-01",
       occurredTo: "2025-12-31",
+      createdThrough: undefined,
     });
     expect(response.json()).toMatchObject({ items: [] });
     expect(response.json().nextCursor).toEqual(expect.any(String));
@@ -404,5 +405,66 @@ describe("HTTP authentication boundary", () => {
 
     expect(response.statusCode).toBe(403);
     expect(retry).not.toHaveBeenCalled();
+  });
+
+  it("requests calculation exports within the authenticated organization", async () => {
+    const requestExport = vi.fn().mockResolvedValue({
+      artifact: { id: "export-01", status: "queued" },
+      jobId: "job-01",
+    });
+    const server = await buildServer({
+      authenticate: async () => authenticatedActor,
+      calculationExports: {
+        request: requestExport,
+        list: vi.fn(),
+        download: vi.fn(),
+      },
+    });
+    servers.push(server);
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/api/calculation-exports",
+      payload: {
+        format: "csv",
+        columns: ["calculationId", "taxAmount"],
+        delimiter: ";",
+        filters: { status: "calculated", occurredFrom: "2026-01-01" },
+      },
+    });
+
+    expect(response.statusCode).toBe(202);
+    expect(requestExport).toHaveBeenCalledWith({
+      tenantId: authenticatedActor.tenantId,
+      actorUserId: authenticatedActor.userId,
+      format: "csv",
+      columns: ["calculationId", "taxAmount"],
+      delimiter: ";",
+      filters: { status: "calculated", occurredFrom: "2026-01-01" },
+    });
+  });
+
+  it("scopes export downloads before reading the stored object", async () => {
+    const download = vi.fn().mockResolvedValue(null);
+    const server = await buildServer({
+      authenticate: async () => authenticatedActor,
+      calculationExports: {
+        request: vi.fn(),
+        list: vi.fn(),
+        download,
+      },
+    });
+    servers.push(server);
+
+    const response = await server.inject({
+      method: "GET",
+      url: "/api/calculation-exports/export-from-another-tenant/download",
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(download).toHaveBeenCalledWith({
+      tenantId: authenticatedActor.tenantId,
+      exportId: "export-from-another-tenant",
+    });
   });
 });

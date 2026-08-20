@@ -37,6 +37,20 @@ export function createPrismaBackgroundJobOperations(
             },
           });
         }
+        if (job.exportId) {
+          await transaction.exportArtifact.update({
+            where: { id: job.exportId },
+            data: {
+              status: "queued",
+              objectKey: null,
+              fileName: null,
+              contentType: null,
+              rowCount: 0,
+              errorMessage: null,
+              readyAt: null,
+            },
+          });
+        }
         await transaction.auditLog.create({
           data: {
             id: uuidv7(),

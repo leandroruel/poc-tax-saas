@@ -95,6 +95,9 @@ function whereFor(
       },
     });
   }
+  if (filters.createdThrough) {
+    and.push({ createdAt: { lte: new Date(filters.createdThrough) } });
+  }
   return { organizationId: tenantId, ...(and.length ? { AND: and } : {}) };
 }
 

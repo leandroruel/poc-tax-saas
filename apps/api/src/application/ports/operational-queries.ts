@@ -21,6 +21,7 @@ export interface NotificationView {
 export interface BackgroundJobView {
   readonly id: string;
   readonly batchId: string | null;
+  readonly exportId: string | null;
   readonly type: string;
   readonly status:
     | "queued"

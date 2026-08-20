@@ -55,6 +55,7 @@ export function createPrismaOperationalQueries(
       return jobs.map((job) => ({
         id: job.id,
         batchId: job.batchId,
+        exportId: job.exportId,
         type: job.type,
         status: job.status,
         progress: {

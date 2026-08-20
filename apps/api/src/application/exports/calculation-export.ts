@@ -76,10 +76,20 @@ export function renderCalculationCsv(input: {
   return `\uFEFF${lines.map((line) => line.join(input.delimiter)).join("\r\n")}\r\n`;
 }
 
-export function calculationEvidence(records: readonly CalculationRecord[]) {
+export function calculationEvidence(input: {
+  readonly records: readonly CalculationRecord[];
+  readonly generatedAt: string;
+}) {
   return {
     schemaVersion: 1,
-    generatedAt: new Date().toISOString(),
-    records,
+    generatedAt: input.generatedAt,
+    records: input.records,
   } as const;
+}
+
+export function renderCalculationEvidence(input: {
+  readonly records: readonly CalculationRecord[];
+  readonly generatedAt: string;
+}): string {
+  return `${JSON.stringify(calculationEvidence(input), null, 2)}\n`;
 }

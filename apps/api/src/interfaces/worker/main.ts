@@ -1,11 +1,21 @@
 import { UnrecoverableError } from "bullmq";
 import { v7 as uuidv7 } from "uuid";
 import { createCalculateTax } from "../../application/calculate-tax.js";
+import {
+  decodeCalculationExportColumns,
+  decodeCalculationExportFilters,
+  decodeCalculationExportOptions,
+} from "../../application/calculation-exports.js";
 import { decodeImportedOperation } from "../../application/codecs/imported-operation.js";
+import {
+  renderCalculationCsv,
+  renderCalculationEvidence,
+} from "../../application/exports/calculation-export.js";
 import { parseCsv } from "../../domain/operations/csv.js";
 import { mapImportedRow, type ImportMapping } from "../../domain/operations/import-mapping.js";
 import { jsonValue } from "../../infrastructure/prisma/json.js";
 import { createPrismaCalculationJournal } from "../../infrastructure/prisma/calculation-journal.js";
+import { createPrismaCalculationLedger } from "../../infrastructure/prisma/calculation-ledger.js";
 import { createPrismaRuleCatalog } from "../../infrastructure/prisma/rule-catalog.js";
 import { recordScheduledRuleActivations } from "../../infrastructure/prisma/scheduled-rule-activation.js";
 import { prisma } from "../../infrastructure/prisma/prisma-client.js";
@@ -20,6 +30,7 @@ import {
   createS3ObjectStorage,
   objectStorageConfigFromEnvironment,
 } from "../../infrastructure/storage/s3-object-storage.js";
+import { tenantObjectKey } from "../../application/ports/object-storage.js";
 
 const activationJobName = "rules.activate-due";
 const storageConfig = objectStorageConfigFromEnvironment();
@@ -30,6 +41,7 @@ const calculateTax = createCalculateTax({
   ruleCatalog: createPrismaRuleCatalog(prisma),
   calculationJournal: createPrismaCalculationJournal(prisma),
 });
+const calculationLedger = createPrismaCalculationLedger(prisma);
 
 const queue = createTaxmanQueue();
 await queue.upsertJobScheduler(
@@ -190,6 +202,112 @@ async function processImportBatch(backgroundJobId: string): Promise<void> {
   });
 }
 
+async function generateCalculationExport(backgroundJobId: string): Promise<void> {
+  const job = await prisma.backgroundJob.findUniqueOrThrow({
+    where: { id: backgroundJobId },
+    include: { export: true },
+  });
+  if (!job.export) {
+    throw new UnrecoverableError("Export job has no artifact.");
+  }
+  const payload = job.payload;
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    throw new UnrecoverableError("Export job payload is invalid.");
+  }
+  let columns;
+  let filters;
+  let options;
+  try {
+    columns = decodeCalculationExportColumns(job.export.columns);
+    filters = decodeCalculationExportFilters(job.export.filters);
+    options = decodeCalculationExportOptions(payload.options);
+  } catch (error) {
+    throw new UnrecoverableError(
+      error instanceof Error ? error.message : "Export configuration is invalid.",
+    );
+  }
+
+  const records = [];
+  let cursor;
+  do {
+    const page = await calculationLedger.list(job.organizationId, {
+      ...filters,
+      limit: 500,
+      cursor,
+    });
+    records.push(...page.items);
+    cursor = page.nextCursor ?? undefined;
+  } while (cursor);
+
+  const generatedAt = new Date().toISOString();
+  const isCsv = job.export.format === "csv";
+  const extension = isCsv ? "csv" : "json";
+  const contentType = isCsv
+    ? "text/csv; charset=utf-8"
+    : "application/json; charset=utf-8";
+  const fileName = `taxman-calculos-${job.export.id}.${extension}`;
+  const objectKey = tenantObjectKey({
+    tenantId: job.organizationId,
+    category: isCsv ? "exports" : "evidence",
+    objectId: job.export.id,
+    extension,
+  });
+  const content = isCsv
+    ? renderCalculationCsv({ records, columns, delimiter: options.delimiter })
+    : renderCalculationEvidence({ records, generatedAt });
+  await storage.put({
+    key: objectKey,
+    bytes: new TextEncoder().encode(content),
+    contentType,
+    metadata: { exportId: job.export.id, tenantId: job.organizationId },
+  });
+  await prisma.$transaction(async (transaction) => {
+    await transaction.exportArtifact.update({
+      where: { id: job.export!.id },
+      data: {
+        status: "ready",
+        objectKey,
+        fileName,
+        contentType,
+        rowCount: records.length,
+        errorMessage: null,
+        readyAt: new Date(generatedAt),
+      },
+    });
+    await transaction.backgroundJob.update({
+      where: { id: backgroundJobId },
+      data: { progressCurrent: records.length, progressTotal: records.length },
+    });
+    await transaction.notification.create({
+      data: {
+        id: uuidv7(),
+        organizationId: job.organizationId,
+        userId: job.createdById,
+        type: "export_ready",
+        title: "Exportação pronta",
+        message: `${records.length} cálculo(s) disponível(is) para download.`,
+        entityType: "ExportArtifact",
+        entityId: job.export!.id,
+      },
+    });
+    await transaction.auditLog.create({
+      data: {
+        id: uuidv7(),
+        actorUserId: job.createdById,
+        organizationId: job.organizationId,
+        action: "calculation_export.generated",
+        entityType: "ExportArtifact",
+        entityId: job.export!.id,
+        after: requiredJson({
+          format: job.export!.format,
+          rowCount: records.length,
+          generatedAt,
+        }),
+      },
+    });
+  });
+}
+
 async function beginTrackedAttempt(backgroundJobId: string) {
   return prisma.$transaction(async (transaction) => {
     const job = await transaction.backgroundJob.findUniqueOrThrow({
@@ -233,7 +351,9 @@ async function runTrackedJob(backgroundJobId: string, handler: () => Promise<voi
       }),
     ]);
   } catch (error) {
-    const finalFailure = tracked.number >= tracked.job.maxAttempts;
+    const finalFailure =
+      error instanceof UnrecoverableError ||
+      tracked.number >= tracked.job.maxAttempts;
     const message = error instanceof Error ? error.message : "Unknown background job failure";
     await prisma.$transaction(async (transaction) => {
       await transaction.jobAttempt.update({
@@ -252,6 +372,20 @@ async function runTrackedJob(backgroundJobId: string, handler: () => Promise<voi
       if (finalFailure) {
         if (tracked.job.batchId) {
           await transaction.importBatch.update({ where: { id: tracked.job.batchId }, data: { status: "failed" } });
+        }
+        if (tracked.job.exportId) {
+          await transaction.exportArtifact.update({
+            where: { id: tracked.job.exportId },
+            data: {
+              status: "failed",
+              objectKey: null,
+              fileName: null,
+              contentType: null,
+              rowCount: 0,
+              readyAt: null,
+              errorMessage: message,
+            },
+          });
         }
         await transaction.notification.create({
           data: {
@@ -290,6 +424,12 @@ async function processJob(job: TaxmanJob): Promise<void> {
   }
   if (job.name === "imports.process") {
     await runTrackedJob(backgroundJobId, () => processImportBatch(backgroundJobId));
+    return;
+  }
+  if (job.name === "exports.generate") {
+    await runTrackedJob(backgroundJobId, () =>
+      generateCalculationExport(backgroundJobId),
+    );
     return;
   }
   throw new UnrecoverableError(`Unsupported job type: ${job.name}`);

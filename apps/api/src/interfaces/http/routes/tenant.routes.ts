@@ -83,6 +83,7 @@ export function registerTenantRoutes(
     const page = await calculationLedger.list(actor.tenantId, {
       ...parsed.data,
       cursor,
+      createdThrough: undefined,
     });
     return {
       items: page.items,

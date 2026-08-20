@@ -17,10 +17,15 @@ import type { BackgroundJobOperations } from "../../application/ports/background
 import type { OperationalQueries } from "../../application/ports/operational-queries.js";
 import type { TenantQueries } from "../../application/ports/tenant-queries.js";
 import {
+  createCalculationExportWorkflow,
+  type CalculationExportWorkflow,
+} from "../../application/calculation-exports.js";
+import {
   createOnboardCompany,
   type OnboardCompany,
 } from "../../application/onboard-company.js";
 import { createPrismaCalculationJournal } from "../../infrastructure/prisma/calculation-journal.js";
+import { createPrismaCalculationExportRepository } from "../../infrastructure/prisma/calculation-export-repository.js";
 import { createPrismaCalculationLedger } from "../../infrastructure/prisma/calculation-ledger.js";
 import { prisma } from "../../infrastructure/prisma/prisma-client.js";
 import { createPrismaRuleCatalog } from "../../infrastructure/prisma/rule-catalog.js";
@@ -43,12 +48,14 @@ import { registerOnboardingRoutes } from "./routes/onboarding.routes.js";
 import { registerOperationsRoutes } from "./routes/operations.routes.js";
 import { registerImportBatchRoutes } from "./routes/import-batch.routes.js";
 import { registerTaxRoutes } from "./routes/tax.routes.js";
+import { registerCalculationExportRoutes } from "./routes/calculation-export.routes.js";
 
 interface ServerDependencies {
   readonly authenticate: AuthenticateRequest;
   readonly authenticateUser: AuthenticateUser;
   readonly calculationLedger: CalculationLedger;
   readonly calculateTax: CalculateTax;
+  readonly calculationExports: CalculationExportWorkflow;
   readonly importBatches: ImportBatchWorkflow;
   readonly jobOperations: BackgroundJobOperations;
   readonly onboardCompany: OnboardCompany;
@@ -71,6 +78,12 @@ function createProductionDependencies(
       createCalculateTax({
         ruleCatalog: createPrismaRuleCatalog(prisma),
         calculationJournal: createPrismaCalculationJournal(prisma),
+      }),
+    calculationExports:
+      overrides.calculationExports ??
+      createCalculationExportWorkflow({
+        repository: createPrismaCalculationExportRepository(prisma),
+        storage: createEnvironmentS3ObjectStorage(),
       }),
     importBatches:
       overrides.importBatches ??
@@ -138,6 +151,11 @@ export async function buildServer(overrides: Partial<ServerDependencies> = {}) {
     app,
     dependencies.authenticate,
     dependencies.importBatches,
+  );
+  registerCalculationExportRoutes(
+    app,
+    dependencies.authenticate,
+    dependencies.calculationExports,
   );
   registerTaxRoutes(app, dependencies.calculateTax, dependencies.authenticate);
 

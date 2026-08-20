@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { CalculationRecord } from "../read-models/calculation-record.js";
-import { renderCalculationCsv } from "./calculation-export.js";
+import {
+  renderCalculationCsv,
+  renderCalculationEvidence,
+} from "./calculation-export.js";
 
 const record: CalculationRecord = {
   id: "calc-01",
@@ -40,5 +43,17 @@ describe("calculation CSV export", () => {
       delimiter: ",",
     });
     expect(csv).toContain('"\'=HYPERLINK(""unsafe"")"');
+  });
+
+  it("renders a timestamped, versioned evidence document", () => {
+    const json = renderCalculationEvidence({
+      records: [record],
+      generatedAt: "2026-08-20T12:30:00.000Z",
+    });
+    expect(JSON.parse(json)).toMatchObject({
+      schemaVersion: 1,
+      generatedAt: "2026-08-20T12:30:00.000Z",
+      records: [{ id: "calc-01" }],
+    });
   });
 });
