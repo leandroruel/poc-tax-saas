@@ -27,6 +27,9 @@ function repository(): ImportBatchRepository {
     queueProcessing: vi.fn().mockResolvedValue({ jobId: "job_02" }),
     list: vi.fn().mockResolvedValue([]),
     get: vi.fn().mockResolvedValue({ ...draft, mapping: null, rowErrors: [] }),
+    listReviewRows: vi.fn().mockResolvedValue({ items: [], nextRowNumber: null }),
+    closeReview: vi.fn().mockResolvedValue({ ...draft, status: "closed" }),
+    cancel: vi.fn().mockResolvedValue({ ...draft, status: "cancelled" }),
   };
 }
 
@@ -87,5 +90,42 @@ describe("import batch workflow", () => {
       }),
     ).rejects.toThrow(ImportBatchConflictError);
     expect(store.configureValidation).not.toHaveBeenCalled();
+  });
+
+  it("normalizes the review note before closing the batch", async () => {
+    const store = repository();
+    const workflow = createImportBatchWorkflow({
+      repository: store,
+      storage: { put: vi.fn(), get: vi.fn(), remove: vi.fn() },
+    });
+
+    await workflow.closeReview({
+      tenantId: "0198ca00-0000-7000-8000-000000000010",
+      actorUserId: "user_01",
+      batchId: draft.id,
+      note: "  Revisão concluída  ",
+      acknowledgedInvalidRows: true,
+      acknowledgedFailedRows: false,
+    });
+
+    expect(store.closeReview).toHaveBeenCalledWith(
+      expect.objectContaining({ note: "Revisão concluída" }),
+    );
+  });
+
+  it("rejects an unauditable cancellation reason", async () => {
+    const workflow = createImportBatchWorkflow({
+      repository: repository(),
+      storage: { put: vi.fn(), get: vi.fn(), remove: vi.fn() },
+    });
+
+    await expect(
+      workflow.cancel({
+        tenantId: "0198ca00-0000-7000-8000-000000000010",
+        actorUserId: "user_01",
+        batchId: draft.id,
+        reason: "não",
+      }),
+    ).rejects.toThrow("cancellation_reason_required");
   });
 });

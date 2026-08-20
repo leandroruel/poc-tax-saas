@@ -36,6 +36,8 @@ import type {
   BackgroundJob,
   ImportBatch,
   ImportBatchDetail,
+  ImportBatchReviewPage,
+  ImportBatchReviewRow,
   Me,
   NotificationFeed,
   OrganizationRole,
@@ -1061,10 +1063,12 @@ const importStatusLabels: Record<ImportBatch["status"], string> = {
 function Imports({
   segment,
   canCreate,
+  canReview,
   canRetry,
 }: {
   segment: "credit_provider" | "insurance_pension";
   canCreate: boolean;
+  canReview: boolean;
   canRetry: boolean;
 }) {
   const batches = useApiQuery<ImportBatch[]>("/api/import-batches?limit=25");
@@ -1073,6 +1077,39 @@ function Imports({
   const [step, setStep] = React.useState(1);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState("");
+  const [reviewRows, setReviewRows] = React.useState<ImportBatchReviewRow[]>([]);
+  const [reviewNextRow, setReviewNextRow] = React.useState<number | null>(null);
+  const [reviewLoading, setReviewLoading] = React.useState(false);
+  const [reviewNote, setReviewNote] = React.useState("");
+  const [acknowledgedInvalidRows, setAcknowledgedInvalidRows] = React.useState(false);
+  const [acknowledgedFailedRows, setAcknowledgedFailedRows] = React.useState(false);
+
+  const loadReviewRows = React.useCallback(
+    async (batchId: string, afterRowNumber?: number) => {
+      setReviewLoading(true);
+      setError("");
+      try {
+        const params = new URLSearchParams({ status: "all", limit: "50" });
+        if (afterRowNumber) params.set("afterRowNumber", String(afterRowNumber));
+        const page = await api<ImportBatchReviewPage>(
+          `/api/import-batches/${batchId}/review-rows?${params.toString()}`,
+        );
+        setReviewRows((current) =>
+          afterRowNumber ? [...current, ...page.items] : page.items,
+        );
+        setReviewNextRow(page.nextRowNumber);
+      } catch (reason) {
+        setError(
+          reason instanceof Error
+            ? reason.message
+            : "Falha ao carregar as linhas para revisão.",
+        );
+      } finally {
+        setReviewLoading(false);
+      }
+    },
+    [],
+  );
 
   const refreshSelected = React.useCallback(async () => {
     if (!selected) return;
@@ -1094,6 +1131,17 @@ function Imports({
     }, 2_000);
     return () => window.clearInterval(timer);
   }, [selected?.status, refreshSelected, jobs.reload, batches.reload]);
+
+  React.useEffect(() => {
+    setReviewRows([]);
+    setReviewNextRow(null);
+    setReviewNote("");
+    setAcknowledgedInvalidRows(false);
+    setAcknowledgedFailedRows(false);
+    if (selected?.status === "requires_review" && canReview) {
+      void loadReviewRows(selected.id);
+    }
+  }, [selected?.id, selected?.status, canReview, loadReviewRows]);
 
   async function upload(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -1187,6 +1235,57 @@ function Imports({
     }
   }
 
+  async function closeReview(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selected) return;
+    setBusy(true);
+    setError("");
+    try {
+      const closed = await api<ImportBatch>(
+        `/api/import-batches/${selected.id}/close-review`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            note: reviewNote,
+            acknowledgedInvalidRows,
+            acknowledgedFailedRows,
+          }),
+        },
+      );
+      setSelected({ ...selected, ...closed });
+      await batches.reload();
+    } catch (reason) {
+      setError(
+        reason instanceof Error ? reason.message : "Falha ao encerrar a revisão.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function cancelBatch() {
+    if (!selected) return;
+    setBusy(true);
+    setError("");
+    try {
+      const cancelled = await api<ImportBatch>(
+        `/api/import-batches/${selected.id}/cancel`,
+        {
+          method: "POST",
+          body: JSON.stringify({ reason: reviewNote }),
+        },
+      );
+      setSelected({ ...selected, ...cancelled });
+      await batches.reload();
+    } catch (reason) {
+      setError(
+        reason instanceof Error ? reason.message : "Falha ao cancelar o lote.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const relatedJobs = jobs.data?.filter(
     (job) => !selected || job.batchId === selected.id,
   );
@@ -1196,6 +1295,9 @@ function Imports({
     : currentJob?.status === "completed"
       ? 100
       : 0;
+  const canCancelSelected =
+    selected !== null &&
+    ["draft", "ready", "requires_review", "failed"].includes(selected.status);
   const columnOptions = (optional = false) => (
     <>
       {optional && <option value="">Não importar</option>}
@@ -1269,6 +1371,11 @@ function Imports({
                 {selected.status === "ready" && (
                   <Button disabled={busy || selected.validRows === 0} onClick={processBatch}>Processar {selected.validRows} linhas válidas</Button>
                 )}
+                {selected.status === "requires_review" && selected.failedRows > 0 && canCreate && (
+                  <Button variant="outline" disabled={busy} onClick={processBatch}>
+                    <RotateCcw size={15} /> Reprocessar {selected.failedRows} falha(s)
+                  </Button>
+                )}
               </div>
               <div className="import-counts">
                 <span><strong>{selected.validRows}</strong> válidas</span>
@@ -1276,7 +1383,7 @@ function Imports({
                 <span><strong>{selected.processedRows}</strong> calculadas</span>
                 <span><strong>{selected.failedRows}</strong> falhas</span>
               </div>
-              {!!selected.rowErrors.length && (
+              {selected.status !== "requires_review" && !!selected.rowErrors.length && (
                 <div className="row-errors">
                   <strong>Amostra de inconsistências</strong>
                   {selected.rowErrors.map((row) => (
@@ -1285,6 +1392,146 @@ function Imports({
                 </div>
               )}
             </div>
+          )}
+          {selected?.status === "requires_review" && canReview && (
+            <section className="batch-review" aria-labelledby="batch-review-title">
+              <div className="batch-review-heading">
+                <div>
+                  <span className="eyebrow">Decisão do revisor</span>
+                  <h3 id="batch-review-title">Conferir inconsistências</h3>
+                  <p>
+                    Revise as linhas abaixo. Encerrar preserva os cálculos válidos e registra
+                    formalmente as inconsistências reconhecidas.
+                  </p>
+                </div>
+                <span className="review-total">
+                  {selected.invalidRows + selected.failedRows} pendência(s)
+                </span>
+              </div>
+              {reviewLoading && reviewRows.length === 0 ? (
+                <Empty text="Carregando linhas para revisão..." />
+              ) : reviewRows.length ? (
+                <div className="review-row-list">
+                  {reviewRows.map((row) => (
+                    <article key={row.rowNumber}>
+                      <header>
+                        <strong>Linha {row.rowNumber}</strong>
+                        <span className={`badge ${row.status}`}>
+                          {row.status === "invalid" ? "Inválida" : "Falha no cálculo"}
+                        </span>
+                      </header>
+                      <div className="review-row-data">
+                        {Object.entries(row.rawData).map(([field, value]) => (
+                          <span key={field}>
+                            <small>{field}</small>
+                            <code>{value}</code>
+                          </span>
+                        ))}
+                      </div>
+                      <ul>
+                        {row.errors.map((item, index) => (
+                          <li key={`${item.field}-${item.code}-${index}`}>{item.message}</li>
+                        ))}
+                      </ul>
+                    </article>
+                  ))}
+                  {reviewNextRow && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={reviewLoading}
+                      onClick={() => void loadReviewRows(selected.id, reviewNextRow)}
+                    >
+                      {reviewLoading ? "Carregando..." : "Carregar mais inconsistências"}
+                    </Button>
+                  )}
+                </div>
+              ) : (
+                <Empty text="Nenhuma inconsistência permanece neste lote." />
+              )}
+              <form className="review-decision" onSubmit={closeReview}>
+                <Field
+                  label="Nota da decisão"
+                  hint="Explique brevemente a conferência realizada; esta nota irá para a auditoria."
+                >
+                  <textarea
+                    value={reviewNote}
+                    onChange={(event) => setReviewNote(event.target.value)}
+                    minLength={5}
+                    maxLength={1_000}
+                    required
+                  />
+                </Field>
+                {selected.invalidRows > 0 && (
+                  <label className="review-acknowledgement">
+                    <input
+                      type="checkbox"
+                      checked={acknowledgedInvalidRows}
+                      onChange={(event) => setAcknowledgedInvalidRows(event.target.checked)}
+                    />
+                    <span>
+                      Reconheço que {selected.invalidRows} linha(s) inválida(s) não geraram cálculo.
+                    </span>
+                  </label>
+                )}
+                {selected.failedRows > 0 && (
+                  <label className="review-acknowledgement">
+                    <input
+                      type="checkbox"
+                      checked={acknowledgedFailedRows}
+                      onChange={(event) => setAcknowledgedFailedRows(event.target.checked)}
+                    />
+                    <span>
+                      Reconheço que {selected.failedRows} linha(s) falharam durante o cálculo.
+                    </span>
+                  </label>
+                )}
+                <div className="review-actions">
+                  <Button
+                    type="submit"
+                    disabled={
+                      busy ||
+                      reviewNote.trim().length < 5 ||
+                      (selected.invalidRows > 0 && !acknowledgedInvalidRows) ||
+                      (selected.failedRows > 0 && !acknowledgedFailedRows)
+                    }
+                  >
+                    {busy ? "Registrando..." : "Encerrar lote revisado"}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    disabled={busy || reviewNote.trim().length < 5}
+                    onClick={() => void cancelBatch()}
+                  >
+                    Cancelar lote
+                  </Button>
+                </div>
+              </form>
+            </section>
+          )}
+          {selected && canReview && canCancelSelected && selected.status !== "requires_review" && (
+            <section className="batch-cancel">
+              <Field
+                label="Motivo do cancelamento"
+                hint="O lote será preservado para auditoria e não poderá ser reaberto."
+              >
+                <textarea
+                  value={reviewNote}
+                  onChange={(event) => setReviewNote(event.target.value)}
+                  minLength={5}
+                  maxLength={1_000}
+                />
+              </Field>
+              <Button
+                type="button"
+                variant="destructive"
+                disabled={busy || reviewNote.trim().length < 5}
+                onClick={() => void cancelBatch()}
+              >
+                {busy ? "Cancelando..." : "Cancelar lote"}
+              </Button>
+            </section>
           )}
         </Panel>
       )}
@@ -1665,6 +1912,7 @@ function Dashboard({ me }: { me: Me }) {
   const permissions = me.membership!.permissions;
   const canCreateCalculation = permissions.includes("calculation:create");
   const canCreateBatch = permissions.includes("batch:create");
+  const canReviewBatch = permissions.includes("batch:review");
   const canRetryJob = permissions.includes("job:retry");
   const canExport = permissions.includes("export:create");
   const nav: { id: Section; label: string; icon: LucideIcon }[] = [
@@ -1774,6 +2022,7 @@ function Dashboard({ me }: { me: Me }) {
             <Imports
               segment={organization.segment}
               canCreate={canCreateBatch}
+              canReview={canReviewBatch}
               canRetry={canRetryJob}
             />
           )}

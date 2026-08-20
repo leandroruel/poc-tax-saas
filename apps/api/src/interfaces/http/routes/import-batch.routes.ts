@@ -43,6 +43,19 @@ const configureSchema = z.object({
 const listSchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(25),
 });
+const reviewRowsSchema = z.object({
+  status: z.enum(["all", "invalid", "failed"]).default("all"),
+  afterRowNumber: z.coerce.number().int().positive().optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+});
+const closeReviewSchema = z
+  .object({
+    note: z.string().trim().min(5).max(1_000),
+    acknowledgedInvalidRows: z.boolean(),
+    acknowledgedFailedRows: z.boolean(),
+  })
+  .strict();
+const cancelSchema = z.object({ reason: z.string().trim().min(5).max(1_000) }).strict();
 
 function sendImportError(error: unknown, reply: FastifyReply) {
   if (error instanceof ImportBatchNotFoundError) {
@@ -121,6 +134,37 @@ export function registerImportBatchRoutes(
     },
   );
 
+  app.get<{ Params: { batchId: string } }>(
+    "/api/import-batches/:batchId/review-rows",
+    async (request, reply) => {
+      const actor = await requireOrganizationPermission(
+        authenticate,
+        request.headers,
+        reply,
+        "batch:review",
+      );
+      if (!actor) return;
+      const parsed = reviewRowsSchema.safeParse(request.query);
+      if (!parsed.success) {
+        return reply.status(400).send({ error: "invalid_request" });
+      }
+      try {
+        return await workflow.reviewRows({
+          tenantId: actor.tenantId,
+          batchId: request.params.batchId,
+          statuses:
+            parsed.data.status === "all"
+              ? ["invalid", "failed"]
+              : [parsed.data.status],
+          afterRowNumber: parsed.data.afterRowNumber,
+          limit: parsed.data.limit,
+        });
+      } catch (error) {
+        return sendImportError(error, reply);
+      }
+    },
+  );
+
   app.post<{ Params: { batchId: string } }>(
     "/api/import-batches/:batchId/validate",
     async (request, reply) => {
@@ -165,6 +209,60 @@ export function registerImportBatchRoutes(
           batchId: request.params.batchId,
         });
         return reply.status(202).send(result);
+      } catch (error) {
+        return sendImportError(error, reply);
+      }
+    },
+  );
+
+  app.post<{ Params: { batchId: string } }>(
+    "/api/import-batches/:batchId/close-review",
+    async (request, reply) => {
+      const actor = await requireOrganizationPermission(
+        authenticate,
+        request.headers,
+        reply,
+        "batch:review",
+      );
+      if (!actor) return;
+      const parsed = closeReviewSchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply.status(400).send({ error: "invalid_request" });
+      }
+      try {
+        return await workflow.closeReview({
+          tenantId: actor.tenantId,
+          actorUserId: actor.userId,
+          batchId: request.params.batchId,
+          ...parsed.data,
+        });
+      } catch (error) {
+        return sendImportError(error, reply);
+      }
+    },
+  );
+
+  app.post<{ Params: { batchId: string } }>(
+    "/api/import-batches/:batchId/cancel",
+    async (request, reply) => {
+      const actor = await requireOrganizationPermission(
+        authenticate,
+        request.headers,
+        reply,
+        "batch:review",
+      );
+      if (!actor) return;
+      const parsed = cancelSchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply.status(400).send({ error: "invalid_request" });
+      }
+      try {
+        return await workflow.cancel({
+          tenantId: actor.tenantId,
+          actorUserId: actor.userId,
+          batchId: request.params.batchId,
+          reason: parsed.data.reason,
+        });
       } catch (error) {
         return sendImportError(error, reply);
       }

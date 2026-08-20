@@ -41,6 +41,22 @@ export interface ImportBatchDetail extends ImportBatchSummary {
   }[];
 }
 
+export type ImportBatchReviewRowStatus = "invalid" | "failed";
+
+export interface ImportBatchReviewRow {
+  readonly rowNumber: number;
+  readonly status: ImportBatchReviewRowStatus;
+  readonly rawData: Readonly<Record<string, string>>;
+  readonly normalizedInput: Readonly<Record<string, unknown>> | null;
+  readonly errors: readonly { field: string; code: string; message: string }[];
+  readonly calculationId: string | null;
+}
+
+export interface ImportBatchReviewPage {
+  readonly items: readonly ImportBatchReviewRow[];
+  readonly nextRowNumber: number | null;
+}
+
 export class ImportBatchNotFoundError extends Error {}
 export class ImportBatchConflictError extends Error {}
 export class DuplicateImportFileError extends Error {
@@ -75,6 +91,27 @@ export interface ImportBatchRepository {
   }): Promise<{ jobId: string }>;
   list(tenantId: string, limit: number): Promise<readonly ImportBatchSummary[]>;
   get(tenantId: string, batchId: string): Promise<ImportBatchDetail | null>;
+  listReviewRows(input: {
+    tenantId: string;
+    batchId: string;
+    statuses: readonly ImportBatchReviewRowStatus[];
+    afterRowNumber?: number;
+    limit: number;
+  }): Promise<ImportBatchReviewPage>;
+  closeReview(input: {
+    tenantId: string;
+    actorUserId: string;
+    batchId: string;
+    note: string;
+    acknowledgedInvalidRows: boolean;
+    acknowledgedFailedRows: boolean;
+  }): Promise<ImportBatchSummary>;
+  cancel(input: {
+    tenantId: string;
+    actorUserId: string;
+    batchId: string;
+    reason: string;
+  }): Promise<ImportBatchSummary>;
 }
 
 export interface ImportBatchWorkflow {
@@ -100,6 +137,27 @@ export interface ImportBatchWorkflow {
   }): Promise<{ jobId: string }>;
   list(tenantId: string, limit: number): Promise<readonly ImportBatchSummary[]>;
   get(tenantId: string, batchId: string): Promise<ImportBatchDetail | null>;
+  reviewRows(input: {
+    tenantId: string;
+    batchId: string;
+    statuses: readonly ImportBatchReviewRowStatus[];
+    afterRowNumber?: number;
+    limit: number;
+  }): Promise<ImportBatchReviewPage>;
+  closeReview(input: {
+    tenantId: string;
+    actorUserId: string;
+    batchId: string;
+    note: string;
+    acknowledgedInvalidRows: boolean;
+    acknowledgedFailedRows: boolean;
+  }): Promise<ImportBatchSummary>;
+  cancel(input: {
+    tenantId: string;
+    actorUserId: string;
+    batchId: string;
+    reason: string;
+  }): Promise<ImportBatchSummary>;
 }
 
 const capabilityBySegment: Partial<Record<TenantSegment, ImportOperationType>> = {
@@ -156,5 +214,20 @@ export function createImportBatchWorkflow(dependencies: {
     process: (input) => dependencies.repository.queueProcessing(input),
     list: (tenantId, limit) => dependencies.repository.list(tenantId, limit),
     get: (tenantId, batchId) => dependencies.repository.get(tenantId, batchId),
+    reviewRows: (input) => dependencies.repository.listReviewRows(input),
+    async closeReview(input) {
+      const note = input.note.trim();
+      if (note.length < 5) {
+        throw new ImportBatchConflictError("review_note_required");
+      }
+      return dependencies.repository.closeReview({ ...input, note });
+    },
+    async cancel(input) {
+      const reason = input.reason.trim();
+      if (reason.length < 5) {
+        throw new ImportBatchConflictError("cancellation_reason_required");
+      }
+      return dependencies.repository.cancel({ ...input, reason });
+    },
   };
 }

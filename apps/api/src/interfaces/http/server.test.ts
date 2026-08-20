@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CalculationRevisionSourceNotFoundError } from "../../application/calculation-errors.js";
+import type { ImportBatchWorkflow } from "../../application/import-batches.js";
 import { buildServer } from "./server.js";
 
 const authenticatedActor = {
@@ -20,6 +21,22 @@ const validCreditPayload = {
     termInDays: 30,
   },
 };
+
+function importBatchWorkflow(
+  overrides: Partial<ImportBatchWorkflow> = {},
+): ImportBatchWorkflow {
+  return {
+    upload: vi.fn(),
+    configure: vi.fn(),
+    process: vi.fn(),
+    list: vi.fn().mockResolvedValue([]),
+    get: vi.fn().mockResolvedValue(null),
+    reviewRows: vi.fn().mockResolvedValue({ items: [], nextRowNumber: null }),
+    closeReview: vi.fn(),
+    cancel: vi.fn(),
+    ...overrides,
+  };
+}
 
 describe("HTTP authentication boundary", () => {
   const servers: Awaited<ReturnType<typeof buildServer>>[] = [];
@@ -405,6 +422,95 @@ describe("HTTP authentication boundary", () => {
 
     expect(response.statusCode).toBe(403);
     expect(retry).not.toHaveBeenCalled();
+  });
+
+  it("lets a reviewer inspect tenant-scoped inconsistent rows", async () => {
+    const reviewRows = vi.fn().mockResolvedValue({
+      items: [],
+      nextRowNumber: null,
+    });
+    const server = await buildServer({
+      authenticate: async () => ({
+        ...authenticatedActor,
+        organizationRole: "reviewer",
+      }),
+      importBatches: importBatchWorkflow({ reviewRows }),
+    });
+    servers.push(server);
+
+    const response = await server.inject({
+      method: "GET",
+      url: "/api/import-batches/batch_01/review-rows?status=failed&limit=40&afterRowNumber=12",
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(reviewRows).toHaveBeenCalledWith({
+      tenantId: authenticatedActor.tenantId,
+      batchId: "batch_01",
+      statuses: ["failed"],
+      afterRowNumber: 12,
+      limit: 40,
+    });
+  });
+
+  it("closes a reviewed batch with the authenticated reviewer identity", async () => {
+    const closeReview = vi.fn().mockResolvedValue({
+      id: "batch_01",
+      status: "closed",
+    });
+    const server = await buildServer({
+      authenticate: async () => ({
+        ...authenticatedActor,
+        organizationRole: "reviewer",
+      }),
+      importBatches: importBatchWorkflow({ closeReview }),
+    });
+    servers.push(server);
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/api/import-batches/batch_01/close-review",
+      payload: {
+        note: "Conferência concluída pelo revisor.",
+        acknowledgedInvalidRows: true,
+        acknowledgedFailedRows: false,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(closeReview).toHaveBeenCalledWith({
+      tenantId: authenticatedActor.tenantId,
+      actorUserId: authenticatedActor.userId,
+      batchId: "batch_01",
+      note: "Conferência concluída pelo revisor.",
+      acknowledgedInvalidRows: true,
+      acknowledgedFailedRows: false,
+    });
+  });
+
+  it("keeps operators from closing a batch review", async () => {
+    const closeReview = vi.fn();
+    const server = await buildServer({
+      authenticate: async () => ({
+        ...authenticatedActor,
+        organizationRole: "operator",
+      }),
+      importBatches: importBatchWorkflow({ closeReview }),
+    });
+    servers.push(server);
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/api/import-batches/batch_01/close-review",
+      payload: {
+        note: "Tentativa sem permissão.",
+        acknowledgedInvalidRows: true,
+        acknowledgedFailedRows: true,
+      },
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(closeReview).not.toHaveBeenCalled();
   });
 
   it("requests calculation exports within the authenticated organization", async () => {

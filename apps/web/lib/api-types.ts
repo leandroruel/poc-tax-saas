@@ -161,6 +161,20 @@ export type ImportBatchDetail = ImportBatch & {
   }[];
 };
 
+export type ImportBatchReviewRow = {
+  rowNumber: number;
+  status: "invalid" | "failed";
+  rawData: Record<string, string>;
+  normalizedInput: Record<string, unknown> | null;
+  errors: { field: string; code: string; message: string }[];
+  calculationId: string | null;
+};
+
+export type ImportBatchReviewPage = {
+  items: ImportBatchReviewRow[];
+  nextRowNumber: number | null;
+};
+
 export type BackgroundJob = {
   id: string;
   batchId: string | null;

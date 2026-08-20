@@ -70,6 +70,8 @@ aplicação, sem depender de um provedor de nuvem.
 - Arquivos de importação e exportação usam uma porta S3; localmente ela aponta para o Silo e pode ser trocada por outro storage compatível sem alterar o domínio.
 - A importação CSV usa um assistente de quatro etapas: upload, mapeamento de colunas, validação e cálculo em chunks. Arquivos idênticos são deduplicados por tenant e hash.
 - Cada linha válida reutiliza o mesmo caso de uso do cálculo individual. O vínculo linha↔cálculo é atômico, permitindo retomada sem duplicar registros.
+- Um lote processado termina em revisão: linhas inválidas e falhas são paginadas para o revisor, falhas podem ser reprocessadas e o encerramento exige reconhecimento explícito das pendências e uma nota auditável.
+- Lotes não podem ser cancelados enquanto validação ou cálculo ainda escrevem resultados. Fora desses estados, o cancelamento preserva o arquivo e a justificativa na trilha de auditoria.
 - Jobs com falha têm tentativas automáticas e retry manual autorizado; progresso, tentativas e erros permanecem consultáveis no dashboard.
 - O histórico pode ser exportado em CSV compatível com Excel, com colunas e separador configuráveis, ou em JSON de evidência versionado. Os filtros e o instante de corte ficam registrados para que o resultado seja reproduzível.
 - Exportações são geradas pelo worker, armazenadas no Silo e baixadas somente por rota autenticada e escopada pelo tenant. Células CSV potencialmente interpretadas como fórmulas são neutralizadas.

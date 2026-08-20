@@ -3,6 +3,7 @@ import { v7 as uuidv7 } from "uuid";
 import type {
   ImportBatchDetail,
   ImportBatchRepository,
+  ImportBatchReviewRow,
   ImportBatchSummary,
 } from "../../application/import-batches.js";
 import {
@@ -11,6 +12,10 @@ import {
   ImportBatchNotFoundError,
 } from "../../application/import-batches.js";
 import type { ImportMapping } from "../../domain/operations/import-mapping.js";
+import {
+  canTransitionImportBatch,
+  importBatchReviewBlocker,
+} from "../../domain/operations/import-batch.js";
 import { jsonValue } from "./json.js";
 
 function requiredJson(value: unknown): Prisma.InputJsonValue {
@@ -29,6 +34,24 @@ function mappingOf(value: Prisma.JsonValue | null): ImportMapping | null {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as unknown as ImportMapping)
     : null;
+}
+
+function reviewRow(row: {
+  rowNumber: number;
+  status: "invalid" | "failed";
+  rawData: Prisma.JsonValue;
+  normalizedInput: Prisma.JsonValue | null;
+  validationErrors: Prisma.JsonValue | null;
+  calculationId: string | null;
+}): ImportBatchReviewRow {
+  return {
+    rowNumber: row.rowNumber,
+    status: row.status,
+    rawData: row.rawData as Readonly<Record<string, string>>,
+    normalizedInput: row.normalizedInput as Readonly<Record<string, unknown>> | null,
+    errors: (row.validationErrors ?? []) as unknown as ImportBatchReviewRow["errors"],
+    calculationId: row.calculationId,
+  };
 }
 
 function summary(batch: {
@@ -264,6 +287,142 @@ export function createPrismaImportBatchRepository(
           errors: (row.validationErrors ?? []) as unknown as ImportBatchDetail["rowErrors"][number]["errors"],
         })),
       };
+    },
+    async listReviewRows(input) {
+      const batch = await prisma.importBatch.findFirst({
+        where: { id: input.batchId, organizationId: input.tenantId },
+        select: { id: true },
+      });
+      if (!batch) throw new ImportBatchNotFoundError();
+      const rows = await prisma.importBatchRow.findMany({
+        where: {
+          batchId: batch.id,
+          status: { in: [...input.statuses] },
+          ...(input.afterRowNumber
+            ? { rowNumber: { gt: input.afterRowNumber } }
+            : {}),
+        },
+        orderBy: { rowNumber: "asc" },
+        take: input.limit + 1,
+      });
+      const hasMore = rows.length > input.limit;
+      const items = rows.slice(0, input.limit).map((row) =>
+        reviewRow({
+          ...row,
+          status: row.status as "invalid" | "failed",
+        }),
+      );
+      return {
+        items,
+        nextRowNumber: hasMore ? (items.at(-1)?.rowNumber ?? null) : null,
+      };
+    },
+    async closeReview(input) {
+      return prisma.$transaction(async (transaction) => {
+        const batch = await transaction.importBatch.findFirst({
+          where: { id: input.batchId, organizationId: input.tenantId },
+        });
+        if (!batch) throw new ImportBatchNotFoundError();
+        const blocker = importBatchReviewBlocker({
+          status: batch.status,
+          invalidRows: batch.invalidRows,
+          failedRows: batch.failedRows,
+          acknowledgedInvalidRows: input.acknowledgedInvalidRows,
+          acknowledgedFailedRows: input.acknowledgedFailedRows,
+        });
+        if (blocker) throw new ImportBatchConflictError(blocker);
+        const closedAt = new Date();
+        const updated = await transaction.importBatch.updateMany({
+          where: {
+            id: batch.id,
+            organizationId: input.tenantId,
+            status: "requires_review",
+          },
+          data: { status: "closed", closedAt },
+        });
+        if (updated.count !== 1) {
+          throw new ImportBatchConflictError("batch_changed_during_review");
+        }
+        await transaction.auditLog.create({
+          data: {
+            id: uuidv7(),
+            actorUserId: input.actorUserId,
+            organizationId: input.tenantId,
+            action: "import.review_closed",
+            entityType: "ImportBatch",
+            entityId: batch.id,
+            before: requiredJson({ status: batch.status }),
+            after: requiredJson({
+              status: "closed",
+              closedAt: closedAt.toISOString(),
+              note: input.note,
+              invalidRows: batch.invalidRows,
+              failedRows: batch.failedRows,
+              acknowledgedInvalidRows: input.acknowledgedInvalidRows,
+              acknowledgedFailedRows: input.acknowledgedFailedRows,
+            }),
+          },
+        });
+        await transaction.notification.create({
+          data: {
+            id: uuidv7(),
+            organizationId: input.tenantId,
+            userId: batch.createdById,
+            type: "batch_completed",
+            title: "Lote revisado e encerrado",
+            message: `${batch.processedRows} linha(s) calculada(s); ${batch.invalidRows + batch.failedRows} inconsistência(s) reconhecida(s).`,
+            entityType: "ImportBatch",
+            entityId: batch.id,
+          },
+        });
+        return summary(
+          await transaction.importBatch.findUniqueOrThrow({
+            where: { id: batch.id },
+          }),
+        );
+      });
+    },
+    async cancel(input) {
+      return prisma.$transaction(async (transaction) => {
+        const batch = await transaction.importBatch.findFirst({
+          where: { id: input.batchId, organizationId: input.tenantId },
+        });
+        if (!batch) throw new ImportBatchNotFoundError();
+        if (batch.status === "validating" || batch.status === "processing") {
+          throw new ImportBatchConflictError("batch_job_in_progress");
+        }
+        if (!canTransitionImportBatch(batch.status, "cancelled")) {
+          throw new ImportBatchConflictError("batch_not_cancellable");
+        }
+        const updated = await transaction.importBatch.updateMany({
+          where: {
+            id: batch.id,
+            organizationId: input.tenantId,
+            status: batch.status,
+          },
+          data: { status: "cancelled" },
+        });
+        if (updated.count !== 1) {
+          throw new ImportBatchConflictError("batch_changed_during_cancellation");
+        }
+        await transaction.auditLog.create({
+          data: {
+            id: uuidv7(),
+            actorUserId: input.actorUserId,
+            organizationId: input.tenantId,
+            action: "import.batch_cancelled",
+            entityType: "ImportBatch",
+            entityId: batch.id,
+            before: requiredJson({ status: batch.status }),
+            after: requiredJson({ status: "cancelled", reason: input.reason }),
+          },
+        });
+        return summary(
+          await transaction.importBatch.findUniqueOrThrow({
+            where: { id: batch.id },
+          }),
+        );
+      });
     },
   };
 }
