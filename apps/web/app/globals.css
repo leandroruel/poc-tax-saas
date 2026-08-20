@@ -667,6 +667,132 @@ td small {
   color: #3458a1;
   background: #e7edfc;
 }
+.badge.validating,
+.badge.processing,
+.badge.active,
+.badge.retrying,
+.badge.queued {
+  color: #3458a1;
+  background: #e7edfc;
+}
+.badge.ready,
+.badge.requires_review,
+.badge.completed {
+  color: #15684e;
+  background: #e1f4ec;
+}
+.badge.failed,
+.badge.cancelled {
+  color: #9f271f;
+  background: #fee8e7;
+}
+.import-stepper {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-bottom: 24px;
+}
+.import-stepper > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #94a09b;
+}
+.import-stepper > div::after {
+  content: "";
+  flex: 1;
+  height: 2px;
+  background: #e5ebe8;
+}
+.import-stepper > div:last-child::after { display: none; }
+.import-stepper span {
+  display: grid;
+  place-items: center;
+  width: 25px;
+  height: 25px;
+  border-radius: 50%;
+  background: #edf1ef;
+  font-size: 10px;
+  font-weight: 800;
+}
+.import-stepper small { font-size: 10px; font-weight: 700; }
+.import-stepper > div.active { color: var(--green); }
+.import-stepper > div.active span,
+.import-stepper > div.active::after { color: #fff; background: var(--green); }
+.import-upload {
+  display: grid;
+  place-items: center;
+  gap: 10px;
+  padding: 34px;
+  border: 1px dashed #adc4ba;
+  border-radius: 12px;
+  background: #f8fcfa;
+  text-align: center;
+}
+.import-upload > svg { color: var(--green); }
+.import-upload > span { color: var(--muted); font-size: 12px; }
+.import-upload input { width: min(100%, 440px); padding: 8px; }
+.mapping-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+}
+.mapping-summary {
+  grid-column: 1 / -1;
+  display: grid;
+  padding: 14px;
+  border-radius: 9px;
+  background: #f4f8f6;
+}
+.mapping-summary span { color: var(--muted); font-size: 11px; }
+.import-progress-view { display: grid; gap: 18px; }
+.job-progress {
+  height: 7px;
+  overflow: hidden;
+  border-radius: 99px;
+  background: #e6ece9;
+}
+.job-progress span {
+  display: block;
+  width: 100%;
+  height: 100%;
+  transform-origin: left;
+  background: var(--green);
+  transition: transform 250ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.import-progress-heading { display: flex; justify-content: space-between; align-items: center; }
+.import-progress-heading > div { display: grid; }
+.import-progress-heading small { color: var(--muted); }
+.import-counts { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+.import-counts span { display: grid; padding: 14px; border: 1px solid var(--line); border-radius: 9px; color: var(--muted); font-size: 10px; }
+.import-counts strong { color: var(--ink); font-size: 20px; }
+.row-errors { display: grid; gap: 8px; }
+.row-errors > div { display: grid; grid-template-columns: 80px 1fr; gap: 12px; padding: 10px 12px; border-radius: 8px; background: #fff8f0; }
+.row-errors span { font-size: 11px; font-weight: 800; }
+.row-errors small { color: #7b5b31; }
+.imports-grid { display: grid; grid-template-columns: 1.2fr .8fr; gap: 18px; margin-top: 18px; align-items: start; }
+.batch-list,
+.job-list { display: grid; gap: 8px; }
+.batch-list > button,
+.job-list > div {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  color: var(--ink);
+  background: #fff;
+  text-align: left;
+  transition: border-color 150ms ease-out, background 150ms ease-out;
+}
+.batch-list > button:hover { border-color: #9cbcaf; background: #f8fcfa; }
+.batch-list > button > span:first-child,
+.job-list > div > span:first-child { display: grid; min-width: 0; margin-right: auto; }
+.batch-list small,
+.job-list small { color: var(--muted); font-size: 10px; }
+.job-list button { display: flex; align-items: center; gap: 5px; border: 0; color: var(--green); background: transparent; font-size: 10px; font-weight: 800; }
 .calculate-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.12fr) minmax(330px, 0.88fr);
@@ -865,7 +991,9 @@ td small {
   }
   .metric-grid,
   .calculate-grid,
-  .ledger-filters {
+  .ledger-filters,
+  .mapping-grid,
+  .imports-grid {
     grid-template-columns: 1fr;
   }
   .rule-version {
@@ -894,5 +1022,18 @@ td small {
   }
   .metric-grid {
     grid-template-columns: 1fr;
+  }
+  .import-stepper small { display: none; }
+  .import-counts { grid-template-columns: 1fr 1fr; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }

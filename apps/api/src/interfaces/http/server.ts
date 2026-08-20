@@ -13,6 +13,7 @@ import type { AuthenticateRequest } from "../../application/ports/authenticator.
 import type { CalculationLedger } from "../../application/ports/calculation-ledger.js";
 import type { AuthenticateUser } from "../../application/ports/user-authenticator.js";
 import type { RuleAdministration } from "../../application/ports/rule-administration.js";
+import type { BackgroundJobOperations } from "../../application/ports/background-job-operations.js";
 import type { OperationalQueries } from "../../application/ports/operational-queries.js";
 import type { TenantQueries } from "../../application/ports/tenant-queries.js";
 import {
@@ -29,6 +30,7 @@ import {
 } from "../../infrastructure/auth/better-auth-authenticator.js";
 import { createPrismaOnboardingStore } from "../../infrastructure/prisma/onboarding-store.js";
 import { createPrismaOperationalQueries } from "../../infrastructure/prisma/operational-queries.js";
+import { createPrismaBackgroundJobOperations } from "../../infrastructure/prisma/background-job-operations.js";
 import { createPrismaImportBatchRepository } from "../../infrastructure/prisma/import-batch-repository.js";
 import { createPrismaRuleAdministration } from "../../infrastructure/prisma/rule-administration.js";
 import { createPrismaTenantQueries } from "../../infrastructure/prisma/tenant-queries.js";
@@ -48,6 +50,7 @@ interface ServerDependencies {
   readonly calculationLedger: CalculationLedger;
   readonly calculateTax: CalculateTax;
   readonly importBatches: ImportBatchWorkflow;
+  readonly jobOperations: BackgroundJobOperations;
   readonly onboardCompany: OnboardCompany;
   readonly operationalQueries: OperationalQueries;
   readonly ruleAdministration: RuleAdministration;
@@ -75,6 +78,8 @@ function createProductionDependencies(
         repository: createPrismaImportBatchRepository(prisma),
         storage: createEnvironmentS3ObjectStorage(),
       }),
+    jobOperations:
+      overrides.jobOperations ?? createPrismaBackgroundJobOperations(prisma),
     onboardCompany:
       overrides.onboardCompany ??
       createOnboardCompany({
@@ -127,6 +132,7 @@ export async function buildServer(overrides: Partial<ServerDependencies> = {}) {
     app,
     dependencies.authenticate,
     dependencies.operationalQueries,
+    dependencies.jobOperations,
   );
   registerImportBatchRoutes(
     app,

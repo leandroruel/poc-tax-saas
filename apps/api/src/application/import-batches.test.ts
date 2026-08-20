@@ -24,6 +24,7 @@ function repository(): ImportBatchRepository {
   return {
     createUploaded: vi.fn().mockResolvedValue(draft),
     configureValidation: vi.fn().mockResolvedValue({ jobId: "job_01" }),
+    queueProcessing: vi.fn().mockResolvedValue({ jobId: "job_02" }),
     list: vi.fn().mockResolvedValue([]),
     get: vi.fn().mockResolvedValue({ ...draft, mapping: null, rowErrors: [] }),
   };

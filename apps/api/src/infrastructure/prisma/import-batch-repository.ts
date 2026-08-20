@@ -184,6 +184,57 @@ export function createPrismaImportBatchRepository(
         return { jobId };
       });
     },
+    async queueProcessing(input) {
+      return prisma.$transaction(async (transaction) => {
+        const batch = await transaction.importBatch.findFirst({
+          where: { id: input.batchId, organizationId: input.tenantId },
+          select: { id: true, status: true },
+        });
+        if (!batch) throw new ImportBatchNotFoundError();
+        if (batch.status !== "ready" && batch.status !== "requires_review") {
+          throw new ImportBatchConflictError("batch_not_ready");
+        }
+        await transaction.importBatchRow.updateMany({
+          where: { batchId: batch.id, status: "failed" },
+          data: { status: "valid", validationErrors: Prisma.DbNull },
+        });
+        const rowsToProcess = await transaction.importBatchRow.count({
+          where: { batchId: batch.id, status: "valid" },
+        });
+        if (!rowsToProcess) {
+          throw new ImportBatchConflictError("batch_has_no_valid_rows");
+        }
+        await transaction.importBatch.update({
+          where: { id: batch.id },
+          data: { status: "processing", failedRows: 0 },
+        });
+        const jobId = uuidv7();
+        await transaction.backgroundJob.create({
+          data: {
+            id: jobId,
+            organizationId: input.tenantId,
+            createdById: input.actorUserId,
+            batchId: batch.id,
+            type: "imports.process",
+            payload: requiredJson({ batchId: batch.id }),
+            progressTotal: rowsToProcess,
+            correlationId: uuidv7(),
+          },
+        });
+        await transaction.auditLog.create({
+          data: {
+            id: uuidv7(),
+            actorUserId: input.actorUserId,
+            organizationId: input.tenantId,
+            action: "import.processing_requested",
+            entityType: "ImportBatch",
+            entityId: batch.id,
+            after: requiredJson({ jobId, rowsToProcess }),
+          },
+        });
+        return { jobId };
+      });
+    },
     async list(tenantId, limit) {
       const batches = await prisma.importBatch.findMany({
         where: { organizationId: tenantId },

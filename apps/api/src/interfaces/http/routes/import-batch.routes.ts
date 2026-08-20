@@ -148,4 +148,27 @@ export function registerImportBatchRoutes(
     },
   );
 
+  app.post<{ Params: { batchId: string } }>(
+    "/api/import-batches/:batchId/process",
+    async (request, reply) => {
+      const actor = await requireOrganizationPermission(
+        authenticate,
+        request.headers,
+        reply,
+        "batch:create",
+      );
+      if (!actor) return;
+      try {
+        const result = await workflow.process({
+          tenantId: actor.tenantId,
+          actorUserId: actor.userId,
+          batchId: request.params.batchId,
+        });
+        return reply.status(202).send(result);
+      } catch (error) {
+        return sendImportError(error, reply);
+      }
+    },
+  );
+
 }

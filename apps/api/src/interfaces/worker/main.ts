@@ -1,8 +1,12 @@
 import { UnrecoverableError } from "bullmq";
 import { v7 as uuidv7 } from "uuid";
+import { createCalculateTax } from "../../application/calculate-tax.js";
+import { decodeImportedOperation } from "../../application/codecs/imported-operation.js";
 import { parseCsv } from "../../domain/operations/csv.js";
 import { mapImportedRow, type ImportMapping } from "../../domain/operations/import-mapping.js";
 import { jsonValue } from "../../infrastructure/prisma/json.js";
+import { createPrismaCalculationJournal } from "../../infrastructure/prisma/calculation-journal.js";
+import { createPrismaRuleCatalog } from "../../infrastructure/prisma/rule-catalog.js";
 import { recordScheduledRuleActivations } from "../../infrastructure/prisma/scheduled-rule-activation.js";
 import { prisma } from "../../infrastructure/prisma/prisma-client.js";
 import {
@@ -22,6 +26,10 @@ const storageConfig = objectStorageConfigFromEnvironment();
 const storageClient = createS3Client(storageConfig);
 const storage = createS3ObjectStorage(storageClient, storageConfig.bucket);
 await assertS3BucketReady(storageClient, storageConfig.bucket);
+const calculateTax = createCalculateTax({
+  ruleCatalog: createPrismaRuleCatalog(prisma),
+  calculationJournal: createPrismaCalculationJournal(prisma),
+});
 
 const queue = createTaxmanQueue();
 await queue.upsertJobScheduler(
@@ -107,6 +115,81 @@ async function validateImportBatch(backgroundJobId: string): Promise<void> {
   });
 }
 
+async function processImportBatch(backgroundJobId: string): Promise<void> {
+  const job = await prisma.backgroundJob.findUniqueOrThrow({
+    where: { id: backgroundJobId },
+    include: { batch: { include: { organization: true } } },
+  });
+  if (!job.batch) throw new UnrecoverableError("Import processing job has no batch.");
+  let processedRows = job.batch.processedRows;
+  let failedRows = job.batch.failedRows;
+  while (true) {
+    const rows = await prisma.importBatchRow.findMany({
+      where: { batchId: job.batch.id, status: "valid" },
+      orderBy: { rowNumber: "asc" },
+      take: 100,
+    });
+    if (!rows.length) break;
+    for (const row of rows) {
+      try {
+        await calculateTax({
+          actorUserId: job.createdById,
+          tenant: {
+            id: job.organizationId,
+            segment: job.batch.organization.segment,
+          },
+          operation: decodeImportedOperation(row.normalizedInput),
+          source: { kind: "import_row", rowId: row.id },
+        });
+        processedRows += 1;
+      } catch (error) {
+        failedRows += 1;
+        await prisma.importBatchRow.updateMany({
+          where: { id: row.id, status: "valid" },
+          data: {
+            status: "failed",
+            validationErrors: requiredJson([
+              {
+                field: "row",
+                code: "calculation_failed",
+                message: error instanceof Error ? error.message : "Falha inesperada no cálculo.",
+              },
+            ]),
+          },
+        });
+      }
+    }
+    await prisma.$transaction([
+      prisma.importBatch.update({
+        where: { id: job.batch.id },
+        data: { processedRows, failedRows },
+      }),
+      prisma.backgroundJob.update({
+        where: { id: backgroundJobId },
+        data: { progressCurrent: processedRows + failedRows },
+      }),
+    ]);
+  }
+  await prisma.$transaction(async (transaction) => {
+    await transaction.importBatch.update({
+      where: { id: job.batch!.id },
+      data: { status: "requires_review", processedRows, failedRows },
+    });
+    await transaction.notification.create({
+      data: {
+        id: uuidv7(),
+        organizationId: job.organizationId,
+        userId: job.createdById,
+        type: "batch_requires_review",
+        title: "Lote pronto para revisão",
+        message: `${processedRows} linha(s) calculada(s) e ${failedRows} falha(s).`,
+        entityType: "ImportBatch",
+        entityId: job.batch!.id,
+      },
+    });
+  });
+}
+
 async function beginTrackedAttempt(backgroundJobId: string) {
   return prisma.$transaction(async (transaction) => {
     const job = await transaction.backgroundJob.findUniqueOrThrow({
@@ -146,7 +229,7 @@ async function runTrackedJob(backgroundJobId: string, handler: () => Promise<voi
       }),
       prisma.backgroundJob.update({
         where: { id: backgroundJobId },
-        data: { status: "completed", finishedAt: new Date(), progressCurrent: 1, progressTotal: 1 },
+        data: { status: "completed", finishedAt: new Date() },
       }),
     ]);
   } catch (error) {
@@ -203,6 +286,10 @@ async function processJob(job: TaxmanJob): Promise<void> {
   }
   if (job.name === "imports.validate") {
     await runTrackedJob(backgroundJobId, () => validateImportBatch(backgroundJobId));
+    return;
+  }
+  if (job.name === "imports.process") {
+    await runTrackedJob(backgroundJobId, () => processImportBatch(backgroundJobId));
     return;
   }
   throw new UnrecoverableError(`Unsupported job type: ${job.name}`);

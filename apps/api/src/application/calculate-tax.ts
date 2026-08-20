@@ -13,6 +13,7 @@ export interface CalculateTaxCommand {
   tenant: Pick<TenantContext, "id" | "segment">;
   operation: IofOperation;
   recalculatesId?: string;
+  source?: { readonly kind: "import_row"; readonly rowId: string };
 }
 
 export interface CalculateTaxResponse {

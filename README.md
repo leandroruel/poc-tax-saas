@@ -68,6 +68,9 @@ aplicação, sem depender de um provedor de nuvem.
 - O MVP suporta somente crédito PJ com principal/prazo definidos e VGBL. Outras modalidades são rejeitadas em vez de aproximadas.
 - Jobs, tentativas e notificações possuem escopo por organização. O sino do dashboard consulta somente notificações do usuário autenticado.
 - Arquivos de importação e exportação usam uma porta S3; localmente ela aponta para o Silo e pode ser trocada por outro storage compatível sem alterar o domínio.
+- A importação CSV usa um assistente de quatro etapas: upload, mapeamento de colunas, validação e cálculo em chunks. Arquivos idênticos são deduplicados por tenant e hash.
+- Cada linha válida reutiliza o mesmo caso de uso do cálculo individual. O vínculo linha↔cálculo é atômico, permitindo retomada sem duplicar registros.
+- Jobs com falha têm tentativas automáticas e retry manual autorizado; progresso, tentativas e erros permanecem consultáveis no dashboard.
 
 Veja [o mapa do domínio](apps/api/src/domain/README.md) para localizar rapidamente cada regra de negócio.
 

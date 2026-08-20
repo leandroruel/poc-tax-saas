@@ -13,6 +13,8 @@ import {
   Scale,
   Settings2,
   ShieldCheck,
+  UploadCloud,
+  RotateCcw,
   Users,
   X,
   type LucideIcon,
@@ -27,6 +29,9 @@ import type {
   CalculationStatus,
   Company as CompanyDto,
   DashboardOverview,
+  BackgroundJob,
+  ImportBatch,
+  ImportBatchDetail,
   Me,
   NotificationFeed,
   OrganizationRole,
@@ -36,14 +41,18 @@ type Section =
   | "overview"
   | "calculate"
   | "history"
+  | "imports"
   | "company"
   | "rules"
   | "audit";
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
+  const isForm = init?.body instanceof FormData;
   const response = await fetch(path, {
     ...init,
     credentials: "include",
-    headers: { "content-type": "application/json", ...init?.headers },
+    headers: isForm
+      ? init?.headers
+      : { "content-type": "application/json", ...init?.headers },
   });
   const text = response.status === 204 ? "" : await response.text();
   let payload: unknown = null;
@@ -932,6 +941,274 @@ function History() {
   );
 }
 
+const importStatusLabels: Record<ImportBatch["status"], string> = {
+  draft: "Mapeamento pendente",
+  validating: "Validando",
+  ready: "Pronto para processar",
+  processing: "Calculando",
+  requires_review: "Requer revisão",
+  closed: "Fechado",
+  failed: "Falhou",
+  cancelled: "Cancelado",
+};
+
+function Imports({
+  segment,
+  canCreate,
+  canRetry,
+}: {
+  segment: "credit_provider" | "insurance_pension";
+  canCreate: boolean;
+  canRetry: boolean;
+}) {
+  const batches = useApiQuery<ImportBatch[]>("/api/import-batches?limit=25");
+  const jobs = useApiQuery<BackgroundJob[]>("/api/jobs?limit=25");
+  const [selected, setSelected] = React.useState<ImportBatchDetail | null>(null);
+  const [step, setStep] = React.useState(1);
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState("");
+
+  const refreshSelected = React.useCallback(async () => {
+    if (!selected) return;
+    const next = await api<ImportBatchDetail>(`/api/import-batches/${selected.id}`);
+    setSelected(next);
+    if (next.status === "ready") setStep(3);
+    if (next.status === "processing") setStep(4);
+    if (next.status === "requires_review") setStep(4);
+  }, [selected?.id]);
+
+  React.useEffect(() => {
+    const active =
+      selected?.status === "validating" || selected?.status === "processing";
+    if (!active) return;
+    const timer = window.setInterval(() => {
+      void refreshSelected();
+      void jobs.reload();
+      void batches.reload();
+    }, 2_000);
+    return () => window.clearInterval(timer);
+  }, [selected?.status, refreshSelected, jobs.reload, batches.reload]);
+
+  async function upload(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      const form = new FormData(event.currentTarget);
+      const created = await api<ImportBatch>("/api/import-batches", {
+        method: "POST",
+        body: form,
+      });
+      setSelected({ ...created, mapping: null, rowErrors: [] });
+      setStep(2);
+      await batches.reload();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Falha no upload.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function validate(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selected) return;
+    setBusy(true);
+    setError("");
+    const form = new FormData(event.currentTarget);
+    const columns =
+      segment === "credit_provider"
+        ? {
+            occurredOn: String(form.get("occurredOn")),
+            amount: String(form.get("amount")),
+            termInDays: String(form.get("termInDays")),
+          }
+        : {
+            occurredOn: String(form.get("occurredOn")),
+            amount: String(form.get("amount")),
+            payer: String(form.get("payer")),
+            priorSameInsurer: String(form.get("priorSameInsurer") || "") || undefined,
+            priorAllInsurers: String(form.get("priorAllInsurers") || "") || undefined,
+          };
+    try {
+      await api(`/api/import-batches/${selected.id}/validate`, {
+        method: "POST",
+        body: JSON.stringify({
+          mapping: {
+            operationType:
+              segment === "credit_provider"
+                ? "credit_pj_principal_defined"
+                : "insurance_vgbl",
+            dateFormat: form.get("dateFormat"),
+            numberFormat: form.get("numberFormat"),
+            columns,
+          },
+          profileName: String(form.get("profileName") || "") || undefined,
+        }),
+      });
+      setSelected({ ...selected, status: "validating" });
+      setStep(3);
+      await Promise.all([jobs.reload(), batches.reload()]);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Falha na validação.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function processBatch() {
+    if (!selected) return;
+    setBusy(true);
+    setError("");
+    try {
+      await api(`/api/import-batches/${selected.id}/process`, { method: "POST" });
+      setSelected({ ...selected, status: "processing" });
+      setStep(4);
+      await Promise.all([jobs.reload(), batches.reload()]);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Falha ao iniciar o lote.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function retry(jobId: string) {
+    setError("");
+    try {
+      await api(`/api/jobs/${jobId}/retry`, { method: "POST" });
+      await Promise.all([jobs.reload(), batches.reload(), refreshSelected()]);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Falha ao tentar novamente.");
+    }
+  }
+
+  const relatedJobs = jobs.data?.filter(
+    (job) => !selected || job.batchId === selected.id,
+  );
+  const currentJob = relatedJobs?.[0];
+  const progress = currentJob?.progress.total
+    ? Math.round((currentJob.progress.current / currentJob.progress.total) * 100)
+    : currentJob?.status === "completed"
+      ? 100
+      : 0;
+  const columnOptions = (optional = false) => (
+    <>
+      {optional && <option value="">Não importar</option>}
+      {selected?.headers.map((header) => (
+        <option key={header} value={header}>{header}</option>
+      ))}
+    </>
+  );
+
+  return (
+    <>
+      <div className="page-heading">
+        <div>
+          <span className="eyebrow">Operação em lote</span>
+          <h1>Importações</h1>
+          <p>Valide, calcule e revise operações sem depender de planilhas manuais.</p>
+        </div>
+        {canCreate && selected && (
+          <Button variant="outline" onClick={() => { setSelected(null); setStep(1); }}>
+            <UploadCloud size={16} /> Nova importação
+          </Button>
+        )}
+      </div>
+      {canCreate && (
+        <Panel title="Assistente de importação" subtitle={`Etapa ${step} de 4`}>
+          <div className="import-stepper" aria-label={`Etapa ${step} de 4`}>
+            {["Arquivo", "Colunas", "Validação", "Processamento"].map((label, index) => (
+              <div className={index + 1 <= step ? "active" : ""} key={label}>
+                <span>{index + 1}</span><small>{label}</small>
+              </div>
+            ))}
+          </div>
+          {error && <p className="form-error">{error}</p>}
+          {step === 1 && (
+            <form className="import-upload" onSubmit={upload}>
+              <UploadCloud size={30} />
+              <strong>Selecione um arquivo CSV</strong>
+              <span>Até 10 MB. A primeira linha deve conter os nomes das colunas.</span>
+              <Input name="file" type="file" accept=".csv,text/csv" required />
+              <Button disabled={busy}>{busy ? "Enviando..." : "Enviar e detectar colunas"}</Button>
+            </form>
+          )}
+          {step === 2 && selected && (
+            <form className="mapping-grid" onSubmit={validate}>
+              <div className="mapping-summary">
+                <strong>{selected.originalFileName}</strong>
+                <span>{selected.totalRows} linhas · {selected.headers.length} colunas detectadas</span>
+              </div>
+              <Field label="Data da operação"><Select name="occurredOn" required>{columnOptions()}</Select></Field>
+              <Field label="Valor"><Select name="amount" required>{columnOptions()}</Select></Field>
+              {segment === "credit_provider" ? (
+                <Field label="Prazo em dias"><Select name="termInDays" required>{columnOptions()}</Select></Field>
+              ) : (
+                <>
+                  <Field label="Responsável pelo aporte"><Select name="payer" required>{columnOptions()}</Select></Field>
+                  <Field label="Aportes na mesma seguradora"><Select name="priorSameInsurer">{columnOptions(true)}</Select></Field>
+                  <Field label="Aportes em todas as seguradoras"><Select name="priorAllInsurers">{columnOptions(true)}</Select></Field>
+                </>
+              )}
+              <Field label="Formato da data"><Select name="dateFormat"><option value="dd/mm/yyyy">DD/MM/AAAA</option><option value="yyyy-mm-dd">AAAA-MM-DD</option></Select></Field>
+              <Field label="Formato dos valores"><Select name="numberFormat"><option value="decimal_comma">10.000,50</option><option value="decimal_dot">10,000.50</option></Select></Field>
+              <Field label="Salvar perfil (opcional)"><Input name="profileName" maxLength={80} placeholder="Ex.: Exportação do core bancário" /></Field>
+              <div className="form-submit"><Button disabled={busy}>{busy ? "Agendando..." : "Validar arquivo"}</Button></div>
+            </form>
+          )}
+          {step >= 3 && selected && (
+            <div className="import-progress-view">
+              <div className="job-progress"><span style={{ transform: `scaleX(${progress / 100})` }} /></div>
+              <div className="import-progress-heading">
+                <div><strong>{importStatusLabels[selected.status]}</strong><small>{progress}% concluído</small></div>
+                {selected.status === "ready" && (
+                  <Button disabled={busy || selected.validRows === 0} onClick={processBatch}>Processar {selected.validRows} linhas válidas</Button>
+                )}
+              </div>
+              <div className="import-counts">
+                <span><strong>{selected.validRows}</strong> válidas</span>
+                <span><strong>{selected.invalidRows}</strong> inválidas</span>
+                <span><strong>{selected.processedRows}</strong> calculadas</span>
+                <span><strong>{selected.failedRows}</strong> falhas</span>
+              </div>
+              {!!selected.rowErrors.length && (
+                <div className="row-errors">
+                  <strong>Amostra de inconsistências</strong>
+                  {selected.rowErrors.map((row) => (
+                    <div key={row.rowNumber}><span>Linha {row.rowNumber}</span><small>{row.errors.map((item) => item.message).join(" · ")}</small></div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </Panel>
+      )}
+      <div className="imports-grid">
+        <Panel title="Lotes recentes" subtitle="Arquivos pertencentes somente a este workspace.">
+          {batches.loading ? <Empty text="Carregando lotes..." /> : batches.data?.length ? (
+            <div className="batch-list">{batches.data.map((batch) => (
+              <button key={batch.id} onClick={() => void api<ImportBatchDetail>(`/api/import-batches/${batch.id}`).then((detail) => { setSelected(detail); setStep(detail.status === "draft" ? 2 : detail.status === "validating" || detail.status === "ready" ? 3 : 4); })}>
+                <span><strong>{batch.originalFileName}</strong><small>{batch.totalRows} linhas · {new Date(batch.createdAt).toLocaleString("pt-BR")}</small></span>
+                <span className={`badge ${batch.status}`}>{importStatusLabels[batch.status]}</span>
+              </button>
+            ))}</div>
+          ) : <Empty text="Nenhum lote importado." />}
+        </Panel>
+        <Panel title="Jobs" subtitle="Tentativas, progresso e falhas técnicas.">
+          {jobs.loading ? <Empty text="Carregando jobs..." /> : relatedJobs?.length ? (
+            <div className="job-list">{relatedJobs.map((job) => (
+              <div key={job.id}>
+                <span><strong>{job.type === "imports.validate" ? "Validação" : "Cálculo em lote"}</strong><small>{job.attemptsMade}/{job.maxAttempts} tentativas</small></span>
+                <span className={`badge ${job.status}`}>{job.status}</span>
+                {job.status === "failed" && canRetry && <button onClick={() => void retry(job.id)}><RotateCcw size={13} /> Tentar novamente</button>}
+              </div>
+            ))}</div>
+          ) : <Empty text="Nenhum job para exibir." />}
+        </Panel>
+      </div>
+    </>
+  );
+}
+
 function Company() {
   const { data: company, error, loading } =
     useApiQuery<CompanyDto>("/api/company");
@@ -1281,9 +1558,12 @@ function Dashboard({ me }: { me: Me }) {
   const organization = me.membership!.organization;
   const permissions = me.membership!.permissions;
   const canCreateCalculation = permissions.includes("calculation:create");
+  const canCreateBatch = permissions.includes("batch:create");
+  const canRetryJob = permissions.includes("job:retry");
   const nav: { id: Section; label: string; icon: LucideIcon }[] = [
     { id: "overview", label: "Visão geral", icon: LayoutDashboard },
     { id: "history", label: "Histórico", icon: FileClock },
+    { id: "imports", label: "Importações", icon: UploadCloud },
     { id: "company", label: "Empresa e equipe", icon: Users },
   ];
   if (canCreateCalculation) {
@@ -1383,6 +1663,13 @@ function Dashboard({ me }: { me: Me }) {
             <Calculate segment={organization.segment} />
           )}
           {section === "history" && <History />}
+          {section === "imports" && (
+            <Imports
+              segment={organization.segment}
+              canCreate={canCreateBatch}
+              canRetry={canRetryJob}
+            />
+          )}
           {section === "company" && <Company />}
           {section === "rules" && <Rules />}
           {section === "audit" && <Rules audit />}

@@ -117,3 +117,52 @@ export type NotificationFeed = {
     readAt: string | null;
   }[];
 };
+
+export type ImportBatchStatus =
+  | "draft"
+  | "validating"
+  | "ready"
+  | "processing"
+  | "requires_review"
+  | "closed"
+  | "failed"
+  | "cancelled";
+
+export type ImportBatch = {
+  id: string;
+  status: ImportBatchStatus;
+  originalFileName: string | null;
+  operationType: CalculationOperationType | null;
+  headers: string[];
+  totalRows: number;
+  validRows: number;
+  invalidRows: number;
+  processedRows: number;
+  failedRows: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ImportBatchDetail = ImportBatch & {
+  mapping: unknown;
+  rowErrors: {
+    rowNumber: number;
+    rawData: Record<string, string>;
+    errors: { field: string; code: string; message: string }[];
+  }[];
+};
+
+export type BackgroundJob = {
+  id: string;
+  batchId: string | null;
+  type: string;
+  status: "queued" | "active" | "retrying" | "completed" | "failed" | "cancelled";
+  progress: { current: number; total: number };
+  attemptsMade: number;
+  maxAttempts: number;
+  correlationId: string;
+  lastErrorCode: string | null;
+  lastErrorMessage: string | null;
+  createdAt: string;
+  updatedAt: string;
+};

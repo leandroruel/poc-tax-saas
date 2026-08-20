@@ -11,6 +11,8 @@ Esta pasta não importa Fastify, Prisma ou Better Auth. Ela contém somente regr
 - `tenancy/tenant-context.ts`: segmento e identidade do tenant usados pelo motor.
 - `tenancy/organization-access.ts`: papéis e permissões organizacionais. É a política central usada pelos guards HTTP e pela UI.
 - `operations/import-batch.ts`: ciclo de vida permitido para lotes; estados fechados e cancelados são terminais e imutáveis.
+- `operations/csv.ts`: parsing determinístico de CSV, incluindo delimitador, aspas e números de linha para evidência.
+- `operations/import-mapping.ts`: tradução explícita das colunas e formatos locais para operações IOF; valores inválidos nunca são aproximados.
 - `shared/money.ts`: dinheiro em centavos com `bigint`, sem aritmética tributária em ponto flutuante.
 
 O caminho de uma requisição é:

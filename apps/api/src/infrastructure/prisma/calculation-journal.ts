@@ -1,7 +1,10 @@
 import type { PrismaClient } from "@prisma/client";
 import { v7 as uuidv7 } from "uuid";
 import type { CalculationJournal } from "../../application/ports/calculation-journal.js";
-import { CalculationRevisionSourceNotFoundError } from "../../application/calculation-errors.js";
+import {
+  CalculationImportRowNotFoundError,
+  CalculationRevisionSourceNotFoundError,
+} from "../../application/calculation-errors.js";
 import type { IofOperation } from "../../domain/iof/operation.js";
 import { selectedRuleIdOf } from "../../domain/iof/outcome.js";
 import { jsonObject } from "./json.js";
@@ -49,6 +52,19 @@ export function createPrismaCalculationJournal(
             recalculatesId: command.recalculatesId,
           },
         });
+        if (command.source?.kind === "import_row") {
+          const linked = await transaction.importBatchRow.updateMany({
+            where: {
+              id: command.source.rowId,
+              status: "valid",
+              batch: { organizationId: command.tenant.id },
+            },
+            data: { status: "processed", calculationId },
+          });
+          if (!linked.count) {
+            throw new CalculationImportRowNotFoundError(command.source.rowId);
+          }
+        }
         await transaction.auditLog.create({
           data: {
             id: uuidv7(),

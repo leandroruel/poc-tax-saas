@@ -364,4 +364,45 @@ describe("HTTP authentication boundary", () => {
     expect(response.statusCode).toBe(200);
     expect(jobs).toHaveBeenCalledWith(authenticatedActor.tenantId, 25);
   });
+
+  it("retries a failed job through the authenticated organization scope", async () => {
+    const retry = vi.fn().mockResolvedValue({ kind: "queued" });
+    const server = await buildServer({
+      authenticate: async () => authenticatedActor,
+      jobOperations: { retry },
+    });
+    servers.push(server);
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/api/jobs/job_01/retry",
+    });
+
+    expect(response.statusCode).toBe(202);
+    expect(retry).toHaveBeenCalledWith({
+      tenantId: authenticatedActor.tenantId,
+      actorUserId: authenticatedActor.userId,
+      jobId: "job_01",
+    });
+  });
+
+  it("keeps reviewers from retrying jobs", async () => {
+    const retry = vi.fn();
+    const server = await buildServer({
+      authenticate: async () => ({
+        ...authenticatedActor,
+        organizationRole: "reviewer",
+      }),
+      jobOperations: { retry },
+    });
+    servers.push(server);
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/api/jobs/job_01/retry",
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(retry).not.toHaveBeenCalled();
+  });
 });

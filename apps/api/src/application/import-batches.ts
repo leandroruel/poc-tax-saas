@@ -68,6 +68,11 @@ export interface ImportBatchRepository {
     mapping: ImportMapping;
     profileName?: string;
   }): Promise<{ jobId: string }>;
+  queueProcessing(input: {
+    tenantId: string;
+    actorUserId: string;
+    batchId: string;
+  }): Promise<{ jobId: string }>;
   list(tenantId: string, limit: number): Promise<readonly ImportBatchSummary[]>;
   get(tenantId: string, batchId: string): Promise<ImportBatchDetail | null>;
 }
@@ -87,6 +92,11 @@ export interface ImportBatchWorkflow {
     batchId: string;
     mapping: ImportMapping;
     profileName?: string;
+  }): Promise<{ jobId: string }>;
+  process(input: {
+    tenantId: string;
+    actorUserId: string;
+    batchId: string;
   }): Promise<{ jobId: string }>;
   list(tenantId: string, limit: number): Promise<readonly ImportBatchSummary[]>;
   get(tenantId: string, batchId: string): Promise<ImportBatchDetail | null>;
@@ -143,6 +153,7 @@ export function createImportBatchWorkflow(dependencies: {
       }
       return dependencies.repository.configureValidation(input);
     },
+    process: (input) => dependencies.repository.queueProcessing(input),
     list: (tenantId, limit) => dependencies.repository.list(tenantId, limit),
     get: (tenantId, batchId) => dependencies.repository.get(tenantId, batchId),
   };
