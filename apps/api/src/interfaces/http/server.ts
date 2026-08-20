@@ -1,5 +1,10 @@
 import Fastify from "fastify";
 import cors from "@fastify/cors";
+import multipart from "@fastify/multipart";
+import {
+  createImportBatchWorkflow,
+  type ImportBatchWorkflow,
+} from "../../application/import-batches.js";
 import {
   createCalculateTax,
   type CalculateTax,
@@ -24,14 +29,17 @@ import {
 } from "../../infrastructure/auth/better-auth-authenticator.js";
 import { createPrismaOnboardingStore } from "../../infrastructure/prisma/onboarding-store.js";
 import { createPrismaOperationalQueries } from "../../infrastructure/prisma/operational-queries.js";
+import { createPrismaImportBatchRepository } from "../../infrastructure/prisma/import-batch-repository.js";
 import { createPrismaRuleAdministration } from "../../infrastructure/prisma/rule-administration.js";
 import { createPrismaTenantQueries } from "../../infrastructure/prisma/tenant-queries.js";
 import { createEnvironmentTaxIdVault } from "../../infrastructure/security/tax-id-vault.js";
+import { createEnvironmentS3ObjectStorage } from "../../infrastructure/storage/s3-object-storage.js";
 import { registerAuthRoutes } from "./routes/auth.routes.js";
 import { registerAdminRuleRoutes } from "./routes/admin-rule.routes.js";
 import { registerTenantRoutes } from "./routes/tenant.routes.js";
 import { registerOnboardingRoutes } from "./routes/onboarding.routes.js";
 import { registerOperationsRoutes } from "./routes/operations.routes.js";
+import { registerImportBatchRoutes } from "./routes/import-batch.routes.js";
 import { registerTaxRoutes } from "./routes/tax.routes.js";
 
 interface ServerDependencies {
@@ -39,6 +47,7 @@ interface ServerDependencies {
   readonly authenticateUser: AuthenticateUser;
   readonly calculationLedger: CalculationLedger;
   readonly calculateTax: CalculateTax;
+  readonly importBatches: ImportBatchWorkflow;
   readonly onboardCompany: OnboardCompany;
   readonly operationalQueries: OperationalQueries;
   readonly ruleAdministration: RuleAdministration;
@@ -59,6 +68,12 @@ function createProductionDependencies(
       createCalculateTax({
         ruleCatalog: createPrismaRuleCatalog(prisma),
         calculationJournal: createPrismaCalculationJournal(prisma),
+      }),
+    importBatches:
+      overrides.importBatches ??
+      createImportBatchWorkflow({
+        repository: createPrismaImportBatchRepository(prisma),
+        storage: createEnvironmentS3ObjectStorage(),
       }),
     onboardCompany:
       overrides.onboardCompany ??
@@ -81,6 +96,9 @@ export async function buildServer(overrides: Partial<ServerDependencies> = {}) {
   await app.register(cors, {
     origin: process.env.APP_ORIGIN ?? "http://localhost:3001",
     credentials: true,
+  });
+  await app.register(multipart, {
+    limits: { files: 1, fileSize: 10 * 1024 * 1024 },
   });
 
   const dependencies = createProductionDependencies(overrides);
@@ -109,6 +127,11 @@ export async function buildServer(overrides: Partial<ServerDependencies> = {}) {
     app,
     dependencies.authenticate,
     dependencies.operationalQueries,
+  );
+  registerImportBatchRoutes(
+    app,
+    dependencies.authenticate,
+    dependencies.importBatches,
   );
   registerTaxRoutes(app, dependencies.calculateTax, dependencies.authenticate);
 

@@ -14,6 +14,8 @@ describe("organization access policy", () => {
   it("keeps reviewers read-only", () => {
     expect(can("reviewer", "calculation:read")).toBe(true);
     expect(can("reviewer", "calculation:create")).toBe(false);
+    expect(can("reviewer", "batch:review")).toBe(true);
+    expect(can("reviewer", "batch:create")).toBe(false);
   });
 
   it("returns the capabilities exposed to callers", () => {

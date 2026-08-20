@@ -89,3 +89,19 @@ export function createS3ObjectStorage(
     },
   };
 }
+
+export function createEnvironmentS3ObjectStorage(): ObjectStorage {
+  let storage: ObjectStorage | undefined;
+  const current = () => {
+    if (!storage) {
+      const config = objectStorageConfigFromEnvironment();
+      storage = createS3ObjectStorage(createS3Client(config), config.bucket);
+    }
+    return storage;
+  };
+  return {
+    put: (object) => current().put(object),
+    get: (key) => current().get(key),
+    remove: (key) => current().remove(key),
+  };
+}

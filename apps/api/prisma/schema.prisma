@@ -51,6 +51,13 @@ enum JobAttemptStatus {
   failed
 }
 
+enum ImportBatchRowStatus {
+  valid
+  invalid
+  processed
+  failed
+}
+
 enum NotificationType {
   batch_completed
   batch_requires_review
@@ -74,15 +81,16 @@ model User {
   sessions        Session[]
   accounts        Account[]
   membership      Member?
-  invitationsSent Invitation[]     @relation("InvitationInviter")
+  invitationsSent Invitation[]           @relation("InvitationInviter")
   profile         UserProfile?
   calculations    Calculation[]
-  rulesCreated    TaxRuleVersion[] @relation("RuleCreatedBy")
-  rulesReviewed   TaxRuleVersion[] @relation("RuleReviewedBy")
-  auditEvents     AuditLog[]       @relation("AuditActor")
+  rulesCreated    TaxRuleVersion[]       @relation("RuleCreatedBy")
+  rulesReviewed   TaxRuleVersion[]       @relation("RuleReviewedBy")
+  auditEvents     AuditLog[]             @relation("AuditActor")
   importBatches   ImportBatch[]
-  backgroundJobs BackgroundJob[]
-  notifications  Notification[]
+  importMappings  ImportMappingProfile[]
+  backgroundJobs  BackgroundJob[]
+  notifications   Notification[]
 }
 
 model Session {
@@ -143,13 +151,14 @@ model Organization {
   segment   TenantSegment
   createdAt DateTime      @default(now())
 
-  members      Member[]
-  invitations  Invitation[]
-  calculations Calculation[]
-  auditEvents  AuditLog[]
-  importBatches ImportBatch[]
+  members        Member[]
+  invitations    Invitation[]
+  calculations   Calculation[]
+  auditEvents    AuditLog[]
+  importBatches  ImportBatch[]
+  importMappings ImportMappingProfile[]
   backgroundJobs BackgroundJob[]
-  notifications Notification[]
+  notifications  Notification[]
 }
 
 model Member {
@@ -244,6 +253,7 @@ model Calculation {
   ruleVersion    TaxRuleVersion? @relation(fields: [ruleVersionId], references: [id], onDelete: Restrict)
   recalculates   Calculation?    @relation("CalculationRevision", fields: [recalculatesId], references: [id], onDelete: Restrict)
   recalculations Calculation[]   @relation("CalculationRevision")
+  importRow      ImportBatchRow?
 
   @@index([organizationId, createdAt(sort: Desc), id(sort: Desc)])
   @@index([createdById])
@@ -271,29 +281,73 @@ model AuditLog {
 }
 
 model ImportBatch {
-  id               String            @id
-  organizationId   String            @db.Uuid
+  id               String                @id
+  organizationId   String                @db.Uuid
   createdById      String
-  status           ImportBatchStatus @default(draft)
-  sourceKind       String            @default("manual_upload")
+  status           ImportBatchStatus     @default(draft)
+  sourceKind       String                @default("manual_upload")
   originalFileName String?
   objectKey        String?
   contentHash      String?
-  totalRows        Int               @default(0)
-  validRows        Int               @default(0)
-  invalidRows      Int               @default(0)
-  processedRows    Int               @default(0)
-  failedRows       Int               @default(0)
-  createdAt        DateTime          @default(now())
-  updatedAt        DateTime          @updatedAt
+  operationType    String?
+  delimiter        String?
+  detectedHeaders  Json?
+  mapping          Json?
+  mappingProfileId String?
+  totalRows        Int                   @default(0)
+  validRows        Int                   @default(0)
+  invalidRows      Int                   @default(0)
+  processedRows    Int                   @default(0)
+  failedRows       Int                   @default(0)
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
   closedAt         DateTime?
-  organization     Organization      @relation(fields: [organizationId], references: [id], onDelete: Restrict)
-  createdBy        User              @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  organization     Organization          @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  createdBy        User                  @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  mappingProfile   ImportMappingProfile? @relation(fields: [mappingProfileId], references: [id], onDelete: SetNull)
   jobs             BackgroundJob[]
+  rows             ImportBatchRow[]
 
   @@index([organizationId, createdAt(sort: Desc), id(sort: Desc)])
   @@index([createdById])
+  @@index([mappingProfileId])
   @@index([status, updatedAt])
+}
+
+model ImportMappingProfile {
+  id             String        @id
+  organizationId String        @db.Uuid
+  createdById    String
+  name           String
+  operationType  String
+  mapping        Json
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  createdBy      User          @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  batches        ImportBatch[]
+
+  @@unique([organizationId, name])
+  @@index([createdById])
+  @@index([organizationId, operationType, updatedAt(sort: Desc)])
+}
+
+model ImportBatchRow {
+  id               String               @id
+  batchId          String
+  rowNumber        Int
+  status           ImportBatchRowStatus
+  rawData          Json
+  normalizedInput  Json?
+  validationErrors Json?
+  calculationId    String?              @unique
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+  batch            ImportBatch          @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  calculation      Calculation?         @relation(fields: [calculationId], references: [id], onDelete: Restrict)
+
+  @@unique([batchId, rowNumber])
+  @@index([batchId, status, rowNumber])
 }
 
 model BackgroundJob {
@@ -308,6 +362,7 @@ model BackgroundJob {
   progressTotal    Int                 @default(0)
   attemptsMade     Int                 @default(0)
   maxAttempts      Int                 @default(3)
+  dispatchVersion  Int                 @default(0)
   correlationId    String              @unique
   lastErrorCode    String?
   lastErrorMessage String?
@@ -327,16 +382,16 @@ model BackgroundJob {
 }
 
 model JobAttempt {
-  id           String           @id
-  jobId        String
-  number       Int
-  status       JobAttemptStatus
+  id            String           @id
+  jobId         String
+  number        Int
+  status        JobAttemptStatus
   correlationId String
-  errorCode    String?
-  errorMessage String?
-  startedAt    DateTime         @default(now())
-  finishedAt   DateTime?
-  job          BackgroundJob    @relation(fields: [jobId], references: [id], onDelete: Restrict)
+  errorCode     String?
+  errorMessage  String?
+  startedAt     DateTime         @default(now())
+  finishedAt    DateTime?
+  job           BackgroundJob    @relation(fields: [jobId], references: [id], onDelete: Restrict)
 
   @@unique([jobId, number])
   @@index([jobId, startedAt])

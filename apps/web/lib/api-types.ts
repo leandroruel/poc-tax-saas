@@ -5,6 +5,9 @@ export type OrganizationPermission =
   | "calculation:create"
   | "company:read"
   | "team:manage"
+  | "batch:read"
+  | "batch:create"
+  | "batch:review"
   | "job:read"
   | "job:retry"
   | "notification:read";

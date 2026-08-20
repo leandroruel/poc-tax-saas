@@ -6,6 +6,9 @@ export type OrganizationPermission =
   | "calculation:create"
   | "company:read"
   | "team:manage"
+  | "batch:read"
+  | "batch:create"
+  | "batch:review"
   | "job:read"
   | "job:retry"
   | "notification:read";
@@ -17,6 +20,9 @@ const permissionsByRole = {
     "calculation:create",
     "company:read",
     "team:manage",
+    "batch:read",
+    "batch:create",
+    "batch:review",
     "job:read",
     "job:retry",
     "notification:read",
@@ -27,6 +33,9 @@ const permissionsByRole = {
     "calculation:create",
     "company:read",
     "team:manage",
+    "batch:read",
+    "batch:create",
+    "batch:review",
     "job:read",
     "job:retry",
     "notification:read",
@@ -36,6 +45,8 @@ const permissionsByRole = {
     "calculation:read",
     "calculation:create",
     "company:read",
+    "batch:read",
+    "batch:create",
     "job:read",
     "job:retry",
     "notification:read",
@@ -44,6 +55,8 @@ const permissionsByRole = {
     "dashboard:read",
     "calculation:read",
     "company:read",
+    "batch:read",
+    "batch:review",
     "job:read",
     "notification:read",
   ],
