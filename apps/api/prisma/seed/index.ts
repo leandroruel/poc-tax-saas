@@ -4,7 +4,12 @@ import { auth } from "../../src/infrastructure/auth/auth.js";
 import { prisma } from "../../src/infrastructure/prisma/prisma-client.js";
 
 const adminEmail = process.env.TAXMAN_ADMIN_EMAIL ?? "admin@taxman.local";
-const adminPassword = process.env.TAXMAN_ADMIN_PASSWORD ?? "TaxMan-local-2026!";
+const adminPassword = process.env.TAXMAN_ADMIN_PASSWORD;
+if (!adminPassword) {
+  throw new Error(
+    "TAXMAN_ADMIN_PASSWORD is required to seed the platform administrator.",
+  );
+}
 const planaltoSource =
   "https://www.planalto.gov.br/ccivil_03/_ato2007-2010/2007/decreto/d6306compilado.htm";
 const suspensionSource =
@@ -180,8 +185,9 @@ async function ensureAdmin() {
       where: { userId: user.id, providerId: "credential" },
     });
     if (!credential) {
-      await prisma.user.delete({ where: { id: user.id } });
-      user = null;
+      throw new Error(
+        `User ${adminEmail} exists without a credential account. Repair the account before seeding; the seed never deletes historical actors.`,
+      );
     }
   }
   if (!user) {
@@ -205,17 +211,20 @@ async function ensureAdmin() {
 async function main() {
   const admin = await ensureAdmin();
   for (const rule of rules) {
-    await prisma.taxRule.upsert({
+    const persistedRule = await prisma.taxRule.upsert({
       where: { code: rule.code },
-      update: { operationType: rule.operationType },
+      update: {},
       create: {
         id: rule.id,
         code: rule.code,
         operationType: rule.operationType,
       },
     });
+    if (persistedRule.operationType !== rule.operationType) {
+      throw new Error(`Rule ${rule.code} has a different operation type.`);
+    }
     for (const version of rule.versions) {
-      const data = {
+      const content = {
         editorialStatus: "approved" as const,
         effectiveFrom: new Date(`${version.effectiveFrom}T00:00:00.000Z`),
         effectiveTo: version.effectiveTo
@@ -226,20 +235,25 @@ async function main() {
         sourceUrl: version.sourceUrl,
         changeReason: version.changeReason,
         snapshotHash: snapshotHash(rule, version),
-        createdById: admin.id,
-        reviewedById: admin.id,
-        approvedAt: new Date(),
       };
       await prisma.taxRuleVersion.upsert({
         where: {
-          ruleId_version: { ruleId: rule.id, version: version.version },
+          ruleId_version: {
+            ruleId: persistedRule.id,
+            version: version.version,
+          },
         },
-        update: data,
+        // Approved seed versions are immutable. Legal/content changes require
+        // a new version instead of rewriting historical provenance.
+        update: {},
         create: {
           id: version.id,
-          ruleId: rule.id,
+          ruleId: persistedRule.id,
           version: version.version,
-          ...data,
+          ...content,
+          createdById: admin.id,
+          reviewedById: admin.id,
+          approvedAt: new Date(),
         },
       });
     }

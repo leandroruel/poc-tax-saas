@@ -23,3 +23,9 @@ export type IofOutcome =
   | { kind: "requires_context"; missing: readonly string[] }
   | { kind: "no_rule"; operationType: IofOperationType }
   | { kind: "ambiguous_rule"; ruleIds: readonly string[] };
+
+export function selectedRuleIdOf(outcome: IofOutcome): string | undefined {
+  if (outcome.kind === "calculated") return outcome.result.ruleId;
+  if (outcome.kind === "not_applicable") return outcome.ruleId;
+  return undefined;
+}

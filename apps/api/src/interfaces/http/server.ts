@@ -39,20 +39,29 @@ interface ServerDependencies {
   readonly tenantQueries: TenantQueries;
 }
 
-function createProductionDependencies(): ServerDependencies {
+function createProductionDependencies(
+  overrides: Partial<ServerDependencies>,
+): ServerDependencies {
   return {
-    authenticate: authenticateWithBetterAuth,
-    authenticateUser: authenticateUserWithBetterAuth,
-    calculateTax: createCalculateTax({
-      ruleCatalog: createPrismaRuleCatalog(prisma),
-      calculationJournal: createPrismaCalculationJournal(prisma),
-    }),
-    onboardCompany: createOnboardCompany({
-      store: createPrismaOnboardingStore(prisma),
-      taxIdVault: createEnvironmentTaxIdVault(),
-    }),
-    ruleAdministration: createPrismaRuleAdministration(prisma),
-    tenantQueries: createPrismaTenantQueries(prisma),
+    authenticate: overrides.authenticate ?? authenticateWithBetterAuth,
+    authenticateUser:
+      overrides.authenticateUser ?? authenticateUserWithBetterAuth,
+    calculateTax:
+      overrides.calculateTax ??
+      createCalculateTax({
+        ruleCatalog: createPrismaRuleCatalog(prisma),
+        calculationJournal: createPrismaCalculationJournal(prisma),
+      }),
+    onboardCompany:
+      overrides.onboardCompany ??
+      createOnboardCompany({
+        store: createPrismaOnboardingStore(prisma),
+        taxIdVault: createEnvironmentTaxIdVault(),
+      }),
+    ruleAdministration:
+      overrides.ruleAdministration ?? createPrismaRuleAdministration(prisma),
+    tenantQueries:
+      overrides.tenantQueries ?? createPrismaTenantQueries(prisma),
   };
 }
 
@@ -64,7 +73,7 @@ export async function buildServer(overrides: Partial<ServerDependencies> = {}) {
     credentials: true,
   });
 
-  const dependencies = { ...createProductionDependencies(), ...overrides };
+  const dependencies = createProductionDependencies(overrides);
 
   app.get("/health", async () => ({ status: "ok" }));
 
@@ -94,12 +103,16 @@ const isMain = import.meta.url === `file://${process.argv[1]}`;
 if (isMain) {
   const app = await buildServer();
   const port = Number(process.env.PORT ?? 3000);
+  let activationTimer: NodeJS.Timeout | undefined;
+  app.addHook("onClose", async () => {
+    if (activationTimer) clearInterval(activationTimer);
+  });
   await app.listen({ port, host: "0.0.0.0" });
   const recordActivations = () =>
     recordScheduledRuleActivations(prisma).catch((error) =>
       app.log.error(error),
     );
   await recordActivations();
-  const activationTimer = setInterval(recordActivations, 60_000);
-  app.addHook("onClose", async () => clearInterval(activationTimer));
+  activationTimer = setInterval(recordActivations, 60_000);
+  activationTimer.unref();
 }

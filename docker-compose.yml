@@ -2,15 +2,19 @@ services:
   db:
     image: postgres:16-alpine
     environment:
-      POSTGRES_DB: taxman
-      POSTGRES_USER: taxman
-      POSTGRES_PASSWORD: taxman
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB in .env}
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
     ports:
-      - "${POSTGRES_PORT:-5433}:5432"
+      - "${POSTGRES_PORT:?set POSTGRES_PORT in .env}:5432"
     volumes:
       - taxman_postgres:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U taxman -d taxman"]
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:?set POSTGRES_USER in .env} -d ${POSTGRES_DB:?set POSTGRES_DB in .env}",
+        ]
       interval: 3s
       timeout: 3s
       retries: 20
@@ -22,14 +26,14 @@ services:
     environment:
       NODE_ENV: production
       PORT: 3000
-      DATABASE_URL: postgresql://taxman:taxman@db:5432/taxman?schema=public
+      DATABASE_URL: postgresql://${POSTGRES_USER:?set POSTGRES_USER in .env}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/${POSTGRES_DB:?set POSTGRES_DB in .env}?schema=public
       APP_ORIGIN: http://localhost:3001
-      BETTER_AUTH_URL: http://localhost:3001
-      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-taxman-local-compose-secret-change-before-production}
-      PERSONAL_DATA_ENCRYPTION_KEY: ${PERSONAL_DATA_ENCRYPTION_KEY:-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=}
-      PERSONAL_DATA_INDEX_KEY: ${PERSONAL_DATA_INDEX_KEY:-AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=}
-      TAXMAN_ADMIN_EMAIL: ${TAXMAN_ADMIN_EMAIL:-admin@taxman.local}
-      TAXMAN_ADMIN_PASSWORD: ${TAXMAN_ADMIN_PASSWORD:-TaxMan-local-2026!}
+      BETTER_AUTH_URL: http://localhost:3000
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?set BETTER_AUTH_SECRET in .env}
+      PERSONAL_DATA_ENCRYPTION_KEY: ${PERSONAL_DATA_ENCRYPTION_KEY:?set PERSONAL_DATA_ENCRYPTION_KEY in .env}
+      PERSONAL_DATA_INDEX_KEY: ${PERSONAL_DATA_INDEX_KEY:?set PERSONAL_DATA_INDEX_KEY in .env}
+      TAXMAN_ADMIN_EMAIL: ${TAXMAN_ADMIN_EMAIL:?set TAXMAN_ADMIN_EMAIL in .env}
+      TAXMAN_ADMIN_PASSWORD: ${TAXMAN_ADMIN_PASSWORD:?set TAXMAN_ADMIN_PASSWORD in .env}
     ports:
       - "3000:3000"
     depends_on:

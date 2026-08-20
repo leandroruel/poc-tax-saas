@@ -1,4 +1,4 @@
-import type { IncomingHttpHeaders } from "node:http";
+import type { RequestHeaders } from "./authenticator.js";
 
 export interface AuthenticatedUser {
   readonly userId: string;
@@ -7,5 +7,5 @@ export interface AuthenticatedUser {
 }
 
 export type AuthenticateUser = (
-  headers: IncomingHttpHeaders,
+  headers: RequestHeaders,
 ) => Promise<AuthenticatedUser | null>;

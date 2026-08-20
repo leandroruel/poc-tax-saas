@@ -51,4 +51,76 @@ describe("calculateTax", () => {
     });
     expect(recordedRule).toEqual(rule);
   });
+
+  it("does not record a selected rule when approved periods are ambiguous", async () => {
+    let recordedRule: IofRuleVersion | undefined;
+    const calculateTax = createCalculateTax({
+      ruleCatalog: {
+        findApprovedEffective: async () => [
+          rule,
+          { ...rule, id: "credit-legacy-v2", version: 2 },
+        ],
+      },
+      calculationJournal: {
+        record: async ({ selectedRule }) => {
+          recordedRule = selectedRule;
+          return { calculationId: "calculation-ambiguous" };
+        },
+      },
+    });
+
+    const response = await calculateTax({
+      actorUserId: "user-1",
+      tenant: { id: "tenant-1", segment: "credit_provider" },
+      operation: {
+        kind: "credit",
+        modality: "principal_defined",
+        occurredOn: "2025-06-10",
+        amount: reais("10000.00"),
+        borrower: { personType: "PJ" },
+        termInDays: 30,
+      },
+    });
+
+    expect(response.outcome.kind).toBe("ambiguous_rule");
+    expect(recordedRule).toBeUndefined();
+  });
+
+  it("records the rule that establishes a non-applicable outcome", async () => {
+    const nonApplicableRule: IofRuleVersion = {
+      ...rule,
+      id: "credit-suspended-v1",
+      treatment: {
+        kind: "not_applicable",
+        reason: "decree_12499_suspended",
+      },
+    };
+    let recordedRule: IofRuleVersion | undefined;
+    const calculateTax = createCalculateTax({
+      ruleCatalog: {
+        findApprovedEffective: async () => [nonApplicableRule],
+      },
+      calculationJournal: {
+        record: async ({ selectedRule }) => {
+          recordedRule = selectedRule;
+          return { calculationId: "calculation-not-applicable" };
+        },
+      },
+    });
+
+    await calculateTax({
+      actorUserId: "user-1",
+      tenant: { id: "tenant-1", segment: "credit_provider" },
+      operation: {
+        kind: "credit",
+        modality: "principal_defined",
+        occurredOn: "2025-06-10",
+        amount: reais("10000.00"),
+        borrower: { personType: "PJ" },
+        termInDays: 30,
+      },
+    });
+
+    expect(recordedRule).toEqual(nonApplicableRule);
+  });
 });

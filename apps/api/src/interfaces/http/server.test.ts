@@ -9,6 +9,17 @@ const authenticatedActor = {
   isPlatformAdmin: false,
 };
 
+const validCreditPayload = {
+  operation: {
+    kind: "credit",
+    occurredOn: "2025-06-10",
+    amount: 10_000,
+    modality: "principal_defined",
+    borrower: { personType: "PJ" },
+    termInDays: 30,
+  },
+};
+
 describe("HTTP authentication boundary", () => {
   const servers: Awaited<ReturnType<typeof buildServer>>[] = [];
 
@@ -49,16 +60,7 @@ describe("HTTP authentication boundary", () => {
     const response = await server.inject({
       method: "POST",
       url: "/tax/calculate",
-      payload: {
-        operation: {
-          kind: "credit",
-          occurredOn: "2025-06-10",
-          amount: 10_000,
-          modality: "principal_defined",
-          borrower: { personType: "PJ" },
-          termInDays: 30,
-        },
-      },
+      payload: validCreditPayload,
     });
 
     expect(response.statusCode).toBe(200);
@@ -72,6 +74,49 @@ describe("HTTP authentication boundary", () => {
         operation: expect.objectContaining({ occurredOn: "2025-06-10" }),
       }),
     );
+  });
+
+  it("returns conflict for ambiguous rule configuration", async () => {
+    const server = await buildServer({
+      authenticate: async () => authenticatedActor,
+      calculateTax: async () => ({
+        calculationId: "calculation_ambiguous",
+        outcome: { kind: "ambiguous_rule", ruleIds: ["rule-1", "rule-2"] },
+      }),
+    });
+    servers.push(server);
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/tax/calculate",
+      payload: validCreditPayload,
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toMatchObject({ status: "ambiguous_rule" });
+  });
+
+  it("returns forbidden when the tenant segment lacks the capability", async () => {
+    const server = await buildServer({
+      authenticate: async () => authenticatedActor,
+      calculateTax: async () => ({
+        calculationId: "calculation_unsupported",
+        outcome: {
+          kind: "unsupported",
+          reason: "segment_capability_mismatch",
+        },
+      }),
+    });
+    servers.push(server);
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/tax/calculate",
+      payload: validCreditPayload,
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(response.json()).toMatchObject({ status: "unsupported" });
   });
 
   it("requires a signed-in user before starting company onboarding", async () => {
@@ -116,6 +161,7 @@ describe("HTTP authentication boundary", () => {
         calculations: vi.fn(),
         getCalculation,
         company: vi.fn(),
+        userContext: vi.fn(),
       },
     });
     servers.push(server);

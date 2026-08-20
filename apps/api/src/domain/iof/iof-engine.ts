@@ -1,6 +1,9 @@
 import type { TenantContext } from "../tenancy/tenant-context.js";
 import type { Money } from "../shared/money.js";
-import type { IofOperation } from "./operation.js";
+import {
+  assertValidIofOperation,
+  type IofOperation,
+} from "./operation.js";
 import type { IofOutcome } from "./outcome.js";
 import type { IofOperationType, IofRuleVersion, TaxRate } from "./rule.js";
 
@@ -60,6 +63,7 @@ export class IofEngine {
   constructor(private readonly rules: readonly IofRuleVersion[]) {}
 
   evaluate({ tenant, operation }: EvaluateIofInput): IofOutcome {
+    assertValidIofOperation(operation);
     const hasCapability =
       (tenant.segment === "credit_provider" && operation.kind === "credit") ||
       (tenant.segment === "insurance_pension" && operation.kind === "vgbl");

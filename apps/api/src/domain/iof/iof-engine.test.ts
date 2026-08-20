@@ -123,4 +123,20 @@ describe("IofEngine", () => {
       reason: "segment_capability_mismatch",
     });
   });
+
+  it("rejects invalid credit terms before applying a rate", () => {
+    expect(() =>
+      new IofEngine([legacyCreditRule]).evaluate({
+        tenant: { id: "tenant-1", segment: "credit_provider" },
+        operation: {
+          kind: "credit",
+          modality: "principal_defined",
+          occurredOn: "2025-06-10",
+          amount: reais("10000.00"),
+          borrower: { personType: "PJ" },
+          termInDays: -5,
+        },
+      }),
+    ).toThrow("Credit term must be a positive safe integer.");
+  });
 });

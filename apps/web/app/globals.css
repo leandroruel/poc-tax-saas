@@ -518,15 +518,25 @@ td small {
   background: #fff2d6;
 }
 .badge.ambiguous_rule,
+.badge.rejected,
 .badge.revoked {
   color: #9f271f;
   background: #fee8e7;
 }
 .badge.neutral,
+.badge.draft,
 .badge.inactive,
 .badge.superseded {
   color: #5f6a66;
   background: #edf1ef;
+}
+.badge.pending_review {
+  color: #8a5c0b;
+  background: #fff2d6;
+}
+.badge.approved {
+  color: #15684e;
+  background: #e1f4ec;
 }
 .badge.scheduled {
   color: #3458a1;
@@ -699,11 +709,15 @@ td small {
     position: fixed;
     left: -280px;
     width: 260px;
-    transition: left 0.2s;
+    visibility: hidden;
+    transition:
+      left 0.2s,
+      visibility 0.2s;
     box-shadow: 20px 0 50px rgba(0, 0, 0, 0.12);
   }
   aside.open {
     left: 0;
+    visibility: visible;
   }
   .close-nav {
     display: block;

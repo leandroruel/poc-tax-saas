@@ -8,6 +8,10 @@ import { prisma } from "../prisma/prisma-client.js";
 
 const developmentSecret = "taxman-local-development-secret-change-me";
 
+function insecureDevelopmentSecretsAllowed(): boolean {
+  return process.env.TAXMAN_ALLOW_INSECURE_DEV_SECRETS === "true";
+}
+
 async function writeAuthAudit(input: {
   action: string;
   entityType: "User" | "Session" | "Account";
@@ -15,25 +19,35 @@ async function writeAuthAudit(input: {
   actorUserId?: string;
   metadata?: Record<string, string>;
 }): Promise<void> {
-  await prisma.auditLog.create({
-    data: {
-      id: uuidv7(),
+  try {
+    await prisma.auditLog.create({
+      data: {
+        id: uuidv7(),
+        action: input.action,
+        entityType: input.entityType,
+        entityId: input.entityId,
+        actorUserId: input.actorUserId,
+        metadata: input.metadata,
+      },
+    });
+  } catch (error) {
+    // Better Auth executes these hooks after the primary write. Propagating a
+    // secondary audit failure would report a failed login/signup even though
+    // identity state may already have changed.
+    console.error("auth_audit_write_failed", {
       action: input.action,
-      entityType: input.entityType,
-      entityId: input.entityId,
-      actorUserId: input.actorUserId,
-      metadata: input.metadata,
-    },
-  });
+      error,
+    });
+  }
 }
 
 function authSecret(): string {
   const configured = process.env.BETTER_AUTH_SECRET;
   if (configured) return configured;
-  if (process.env.NODE_ENV === "production") {
-    throw new Error("BETTER_AUTH_SECRET is required in production");
-  }
-  return developmentSecret;
+  if (insecureDevelopmentSecretsAllowed()) return developmentSecret;
+  throw new Error(
+    "BETTER_AUTH_SECRET is required. Set TAXMAN_ALLOW_INSECURE_DEV_SECRETS=true only for disposable local development.",
+  );
 }
 
 async function rejectExistingMembership(userId: string): Promise<void> {
@@ -77,6 +91,20 @@ export const auth = betterAuth({
     },
     session: {
       create: {
+        before: async (session) => {
+          const membership = await prisma.member.findUnique({
+            where: { userId: session.userId },
+            select: { organizationId: true },
+          });
+          return membership
+            ? {
+                data: {
+                  ...session,
+                  activeOrganizationId: membership.organizationId,
+                },
+              }
+            : undefined;
+        },
         after: (session) =>
           writeAuthAudit({
             action: "identity.session_created",

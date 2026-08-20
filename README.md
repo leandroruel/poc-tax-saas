@@ -4,16 +4,26 @@ MVP B2B para cálculo auditável de IOF com autenticação, isolamento por empre
 
 ## Executar com Docker
 
+Crie o arquivo local de ambiente e substitua todos os valores `replace-*`:
+
 ```bash
+cp .env.example .env
+openssl rand -hex 32
+openssl rand -base64 32
+openssl rand -base64 32
 docker compose up --build
 ```
 
-Acesse `http://localhost:3001`. O seed local cria o super-admin:
+A primeira saída pode ser usada em `BETTER_AUTH_SECRET`; as duas seguintes, em
+`PERSONAL_DATA_ENCRYPTION_KEY` e `PERSONAL_DATA_INDEX_KEY`. Defina também uma
+senha própria em `TAXMAN_ADMIN_PASSWORD`.
 
-- e-mail: `admin@taxman.local`
-- senha: `TaxMan-local-2026!`
+Acesse `http://localhost:3001`. O seed cria o super-admin usando
+`TAXMAN_ADMIN_EMAIL` e `TAXMAN_ADMIN_PASSWORD`; não existem credenciais padrão
+embutidas na aplicação.
 
-No primeiro login, conclua o onboarding com CPF, empresa, CNPJ e segmento. As credenciais padrão são apenas para ambiente local e podem ser substituídas pelas variáveis descritas em [.env.example](.env.example).
+No primeiro login, conclua o onboarding com CPF, empresa, CNPJ e segmento. O
+arquivo [.env.example](.env.example) documenta todas as variáveis necessárias.
 
 ## Desenvolvimento com pnpm
 

@@ -11,10 +11,12 @@ export function registerAuthRoutes(app: FastifyInstance) {
         request.url,
         `http://${request.headers.host ?? "localhost"}`,
       );
+      const headers = fromNodeHeaders(request.headers);
+      headers.delete("content-length");
       const response = await auth.handler(
         new Request(url, {
           method: request.method,
-          headers: fromNodeHeaders(request.headers),
+          headers,
           body:
             request.method === "GET" ||
             request.method === "HEAD" ||

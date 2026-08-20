@@ -1,55 +1,27 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { z } from "zod";
+import {
+  serializedTaxTreatmentSchema,
+  toDomainTaxTreatment,
+} from "../../../application/codecs/tax-treatment-codec.js";
+import { businessDateInBrazil } from "../../../application/time/business-calendar.js";
 import type {
   AuthenticateUser,
   AuthenticatedUser,
 } from "../../../application/ports/user-authenticator.js";
 import type { RuleAdministration } from "../../../application/ports/rule-administration.js";
-import type { TaxTreatment } from "../../../domain/iof/rule.js";
 import { isLocalDate } from "../../../domain/iof/operation.js";
-import { reais } from "../../../domain/shared/money.js";
 
 const localDate = z.string().refine(isLocalDate, "data inválida");
-const rate = z
-  .object({
-    percentage: z.string().regex(/^\d+(?:\.\d+)?$/),
-    unit: z.enum(["percent", "daily_percent"]),
-  })
-  .strict();
-const treatment = z.discriminatedUnion("kind", [
-  z
-    .object({
-      kind: z.literal("not_applicable"),
-      reason: z.string().min(3).max(200),
-    })
-    .strict(),
-  z
-    .object({
-      kind: z.literal("rate"),
-      rate,
-      additionalRate: rate.optional(),
-      basePolicy: z.discriminatedUnion("kind", [
-        z.object({ kind: z.literal("full_amount") }).strict(),
-        z
-          .object({
-            kind: z.literal("aggregate_threshold"),
-            scope: z.enum(["same_insurer", "all_insurers"]),
-            threshold: z.string().regex(/^\d+(?:\.\d{1,2})?$/),
-          })
-          .strict(),
-      ]),
-    })
-    .strict(),
-]);
 const draftSchema = z
   .object({
     ruleCode: z.string().regex(/^IOF_[A-Z0-9_]+$/),
     operationType: z.enum(["credit_pj_principal_defined", "insurance_vgbl"]),
     effectiveFrom: localDate,
     effectiveTo: localDate.nullable(),
-    treatment,
+    treatment: serializedTaxTreatmentSchema,
     legalBasis: z.string().min(5),
-    sourceUrl: z.string().url(),
+    sourceUrl: z.url(),
     changeReason: z.string().min(5),
   })
   .strict()
@@ -61,20 +33,6 @@ const draftSchema = z
 const transitionSchema = z
   .object({ action: z.enum(["submit", "approve", "reject", "revoke"]) })
   .strict();
-
-function domainTreatment(value: z.infer<typeof treatment>): TaxTreatment {
-  if (value.kind === "not_applicable") return value;
-  if (value.basePolicy.kind === "full_amount") {
-    return { ...value, basePolicy: { kind: "full_amount" } };
-  }
-  return {
-    ...value,
-    basePolicy: {
-      ...value.basePolicy,
-      threshold: reais(value.basePolicy.threshold),
-    },
-  };
-}
 
 async function requireAdmin(
   authenticate: AuthenticateUser,
@@ -100,7 +58,7 @@ export function registerAdminRuleRoutes(
 ) {
   app.get("/api/admin/rules", async (request, reply) => {
     if (!(await requireAdmin(authenticate, request.headers, reply))) return;
-    return rules.list(new Date().toISOString().slice(0, 10));
+    return rules.list(businessDateInBrazil());
   });
   app.get("/api/admin/audit", async (request, reply) => {
     if (!(await requireAdmin(authenticate, request.headers, reply))) return;
@@ -121,7 +79,7 @@ export function registerAdminRuleRoutes(
       await rules.createDraft({
         actorUserId: actor.userId,
         ...parsed.data,
-        treatment: domainTreatment(parsed.data.treatment),
+        treatment: toDomainTaxTreatment(parsed.data.treatment),
       }),
     );
   });

@@ -32,7 +32,7 @@ const operationSchema = z.discriminatedUnion("kind", [
       occurredOn: localDateSchema,
       amount: moneySchema,
       borrower: z.object({ personType: z.literal("PJ") }).strict(),
-      termInDays: z.number().int().positive(),
+      termInDays: z.number().int().positive().safe(),
     })
     .strict(),
   z
@@ -47,7 +47,8 @@ const operationSchema = z.discriminatedUnion("kind", [
           sameInsurer: nonNegativeMoneySchema.optional(),
           allInsurers: nonNegativeMoneySchema.optional(),
         })
-        .strict(),
+        .strict()
+        .default({}),
     })
     .strict(),
 ]);
@@ -55,7 +56,7 @@ const operationSchema = z.discriminatedUnion("kind", [
 const requestSchema = z
   .object({
     operation: operationSchema,
-    recalculatesId: z.string().uuid().optional(),
+    recalculatesId: z.uuid().optional(),
   })
   .strict();
 
@@ -111,7 +112,9 @@ export function registerTaxRoutes(
     });
     const status =
       response.outcome.kind === "ambiguous_rule"
-        ? 500
+        ? 409
+        : response.outcome.kind === "unsupported"
+          ? 403
         : response.outcome.kind === "calculated" ||
             response.outcome.kind === "not_applicable"
           ? 200

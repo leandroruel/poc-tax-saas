@@ -51,14 +51,65 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
     credentials: "include",
     headers: { "content-type": "application/json", ...init?.headers },
   });
-  const payload = response.status === 204 ? null : await response.json();
+  const text = response.status === 204 ? "" : await response.text();
+  let payload: unknown = null;
+  if (text) {
+    try {
+      payload = JSON.parse(text);
+    } catch {
+      payload = null;
+    }
+  }
+  const errorPayload =
+    payload && typeof payload === "object"
+      ? (payload as { message?: string; error?: string })
+      : null;
   if (!response.ok)
     throw new Error(
-      payload?.message ??
-        payload?.error ??
-        "Não foi possível concluir a operação.",
+      errorPayload?.message ??
+        errorPayload?.error ??
+        `Não foi possível concluir a operação. (HTTP ${response.status})`,
     );
   return payload as T;
+}
+
+function useApiQuery<T>(path: string) {
+  const [data, setData] = React.useState<T | null>(null);
+  const [error, setError] = React.useState("");
+  const [loading, setLoading] = React.useState(true);
+  const mounted = React.useRef(true);
+
+  React.useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
+  const reload = React.useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const next = await api<T>(path);
+      if (mounted.current) setData(next);
+    } catch (reason) {
+      if (mounted.current) {
+        setError(
+          reason instanceof Error
+            ? reason.message
+            : "Não foi possível carregar os dados.",
+        );
+      }
+    } finally {
+      if (mounted.current) setLoading(false);
+    }
+  }, [path]);
+
+  React.useEffect(() => {
+    void reload();
+  }, [reload]);
+
+  return { data, error, loading, reload };
 }
 
 function AuthScreen() {
@@ -75,16 +126,23 @@ function AuthScreen() {
       email: String(form.get("email")),
       password: String(form.get("password")),
     };
-    const result = creating
-      ? await authClient.signUp.email({
-          ...credentials,
-          name: String(form.get("name")),
-        })
-      : await authClient.signIn.email(credentials);
-    setBusy(false);
-    if (result.error)
-      return setError(result.error.message ?? "Credenciais inválidas.");
-    window.location.reload();
+    try {
+      const result = creating
+        ? await authClient.signUp.email({
+            ...credentials,
+            name: String(form.get("name")),
+          })
+        : await authClient.signIn.email(credentials);
+      if (result.error) {
+        setError(result.error.message ?? "Credenciais inválidas.");
+        return;
+      }
+      window.location.reload();
+    } catch {
+      setError("Serviço de autenticação indisponível. Tente novamente.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
@@ -153,7 +211,6 @@ function AuthScreen() {
           >
             {creating ? "Já tenho uma conta" : "Criar conta empresarial"}
           </button>
-          <p className="local-login">Acesso inicial: admin@taxman.local</p>
         </form>
       </section>
     </main>
@@ -364,10 +421,7 @@ function Panel({
 }
 
 function Overview({ setSection }: { setSection: (section: Section) => void }) {
-  const [data, setData] = React.useState<any>(null);
-  React.useEffect(() => {
-    api<any>("/api/dashboard").then(setData);
-  }, []);
+  const { data, error, loading } = useApiQuery<any>("/api/dashboard");
   return (
     <>
       <div className="page-heading">
@@ -401,7 +455,9 @@ function Overview({ setSection }: { setSection: (section: Section) => void }) {
         title="Atividade recente"
         subtitle="Últimos cálculos realizados neste workspace."
       >
-        {!data ? (
+        {error ? (
+          <Empty text={error} />
+        ) : loading || !data ? (
           <Empty text="Carregando atividade..." />
         ) : data.recentCalculations.length === 0 ? (
           <Empty text="Nenhum cálculo registrado. Crie o primeiro para iniciar o histórico." />
@@ -647,10 +703,8 @@ function Calculate({
 }
 
 function History() {
-  const [rows, setRows] = React.useState<any[] | null>(null);
-  React.useEffect(() => {
-    api<any[]>("/api/calculations").then(setRows);
-  }, []);
+  const { data: rows, error, loading } =
+    useApiQuery<any[]>("/api/calculations");
   return (
     <>
       <div className="page-heading">
@@ -664,7 +718,9 @@ function History() {
         </div>
       </div>
       <Panel title="Cálculos" subtitle="Até 100 registros mais recentes.">
-        {rows === null ? (
+        {error ? (
+          <Empty text={error} />
+        ) : loading || rows === null ? (
           <Empty text="Carregando histórico..." />
         ) : rows.length ? (
           <CalculationRows rows={rows} />
@@ -677,10 +733,8 @@ function History() {
 }
 
 function Company() {
-  const [company, setCompany] = React.useState<any>(null);
-  React.useEffect(() => {
-    api("/api/company").then(setCompany);
-  }, []);
+  const { data: company, error, loading } =
+    useApiQuery<any>("/api/company");
   return (
     <>
       <div className="page-heading">
@@ -691,10 +745,12 @@ function Company() {
         </div>
       </div>
       <Panel
-        title={company?.name ?? "Carregando empresa..."}
+        title={company?.name ?? (loading ? "Carregando empresa..." : "Empresa")}
         subtitle={company ? `${company.slug} · ${company.segment}` : undefined}
       >
-        {company && (
+        {error ? (
+          <Empty text={error} />
+        ) : company ? (
           <div className="member-list">
             {company.members.map((member: any) => (
               <div className="member" key={member.id}>
@@ -709,6 +765,8 @@ function Company() {
               </div>
             ))}
           </div>
+        ) : (
+          <Empty text="Carregando empresa..." />
         )}
       </Panel>
     </>
@@ -716,17 +774,18 @@ function Company() {
 }
 
 function Rules({ audit = false }: { audit?: boolean }) {
-  const [data, setData] = React.useState<any[] | null>(null);
+  const endpoint = audit ? "/api/admin/audit" : "/api/admin/rules";
+  const {
+    data,
+    error: loadError,
+    loading,
+    reload,
+  } = useApiQuery<any[]>(endpoint);
   const [creating, setCreating] = React.useState(false);
   const [error, setError] = React.useState("");
-  const load = React.useCallback(
-    () =>
-      api<any[]>(audit ? "/api/admin/audit" : "/api/admin/rules").then(setData),
-    [audit],
-  );
-  React.useEffect(() => {
-    load();
-  }, [load]);
+  const [draftOperationType, setDraftOperationType] = React.useState<
+    "credit_pj_principal_defined" | "insurance_vgbl"
+  >("credit_pj_principal_defined");
 
   async function transition(id: string, action: string) {
     setError("");
@@ -735,7 +794,7 @@ function Rules({ audit = false }: { audit?: boolean }) {
         method: "POST",
         body: JSON.stringify({ action }),
       });
-      await load();
+      await reload();
     } catch (reason) {
       setError(
         reason instanceof Error ? reason.message : "Transição inválida.",
@@ -788,7 +847,7 @@ function Rules({ audit = false }: { audit?: boolean }) {
         body: JSON.stringify(body),
       });
       setCreating(false);
-      await load();
+      await reload();
     } catch (reason) {
       setError(
         reason instanceof Error
@@ -809,7 +868,11 @@ function Rules({ audit = false }: { audit?: boolean }) {
           </div>
         </div>
         <Panel title="Eventos recentes">
-          {data && (
+          {loadError ? (
+            <Empty text={loadError} />
+          ) : loading || !data ? (
+            <Empty text="Carregando auditoria..." />
+          ) : (
             <div className="audit-list">
               {data.map((event: any) => (
                 <div key={event.id}>
@@ -852,13 +915,26 @@ function Rules({ audit = false }: { audit?: boolean }) {
           <form className="form-grid admin-form" onSubmit={createDraft}>
             <Field label="Código da regra">
               <Input
+                key={draftOperationType}
                 name="ruleCode"
-                defaultValue="IOF_CREDIT_PJ_PRINCIPAL_DEFINED"
+                defaultValue={
+                  draftOperationType === "credit_pj_principal_defined"
+                    ? "IOF_CREDIT_PJ_PRINCIPAL_DEFINED"
+                    : "IOF_INSURANCE_VGBL"
+                }
                 required
               />
             </Field>
             <Field label="Modalidade">
-              <Select name="operationType">
+              <Select
+                name="operationType"
+                value={draftOperationType}
+                onChange={(event) =>
+                  setDraftOperationType(
+                    event.target.value as typeof draftOperationType,
+                  )
+                }
+              >
                 <option value="credit_pj_principal_defined">
                   Crédito PJ · principal definido
                 </option>
@@ -871,21 +947,41 @@ function Rules({ audit = false }: { audit?: boolean }) {
             <Field label="Vigência final (exclusiva)">
               <Input name="effectiveTo" type="date" />
             </Field>
-            <Field label="Alíquota principal (%)">
-              <Input name="rate" defaultValue="0.0082" required />
-            </Field>
-            <Field label="Adicional (%)">
-              <Input name="additionalRate" defaultValue="0.38" />
-            </Field>
-            <Field label="Escopo VGBL">
-              <Select name="scope">
-                <option value="same_insurer">Mesma seguradora</option>
-                <option value="all_insurers">Todas as seguradoras</option>
-              </Select>
-            </Field>
-            <Field label="Limite VGBL">
-              <Input name="threshold" defaultValue="600000.00" />
-            </Field>
+            {draftOperationType === "credit_pj_principal_defined" ? (
+              <>
+                <Field label="Alíquota diária (%)">
+                  <Input
+                    key="credit-rate"
+                    name="rate"
+                    defaultValue="0.0082"
+                    required
+                  />
+                </Field>
+                <Field label="Adicional (%)">
+                  <Input name="additionalRate" defaultValue="0.38" required />
+                </Field>
+              </>
+            ) : (
+              <>
+                <Field label="Alíquota sobre o excedente (%)">
+                  <Input
+                    key="vgbl-rate"
+                    name="rate"
+                    defaultValue="5"
+                    required
+                  />
+                </Field>
+                <Field label="Escopo VGBL">
+                  <Select name="scope">
+                    <option value="same_insurer">Mesma seguradora</option>
+                    <option value="all_insurers">Todas as seguradoras</option>
+                  </Select>
+                </Field>
+                <Field label="Limite VGBL">
+                  <Input name="threshold" defaultValue="600000.00" required />
+                </Field>
+              </>
+            )}
             <Field label="Fundamento legal">
               <Input name="legalBasis" required />
             </Field>
@@ -908,7 +1004,11 @@ function Rules({ audit = false }: { audit?: boolean }) {
         title="Regras versionadas"
         subtitle="Scheduled e active são derivados da vigência; nenhum cron decide o cálculo."
       >
-        {data && (
+        {loadError ? (
+          <Empty text={loadError} />
+        ) : loading || !data ? (
+          <Empty text="Carregando regras..." />
+        ) : (
           <div className="rule-list">
             {data.map((rule: any) => (
               <article key={rule.id}>
@@ -996,7 +1096,11 @@ function Dashboard({ me }: { me: Me }) {
             <Scale size={22} />
           </span>{" "}
           TaxMan
-          <button className="close-nav" onClick={() => setMobile(false)}>
+          <button
+            className="close-nav"
+            aria-label="Fechar menu"
+            onClick={() => setMobile(false)}
+          >
             <X />
           </button>
         </div>
@@ -1039,6 +1143,7 @@ function Dashboard({ me }: { me: Me }) {
           </div>
           <button
             title="Sair"
+            aria-label="Sair"
             onClick={() =>
               authClient.signOut().then(() => window.location.reload())
             }
@@ -1049,7 +1154,7 @@ function Dashboard({ me }: { me: Me }) {
       </aside>
       <main className="workspace">
         <header className="mobile-header">
-          <button onClick={() => setMobile(true)}>
+          <button aria-label="Abrir menu" onClick={() => setMobile(true)}>
             <Menu />
           </button>
           <div className="brand dark">TaxMan</div>
@@ -1072,12 +1177,24 @@ function Dashboard({ me }: { me: Me }) {
 export default function Page() {
   const session = authClient.useSession();
   const [me, setMe] = React.useState<Me | null>(null);
-  const [loadingMe, setLoadingMe] = React.useState(false);
+  const [loadingMe, setLoadingMe] = React.useState(true);
+  const [meError, setMeError] = React.useState("");
   React.useEffect(() => {
-    if (!session.data) return;
+    if (!session.data) {
+      setLoadingMe(false);
+      return;
+    }
     setLoadingMe(true);
+    setMeError("");
     api<Me>("/api/me")
       .then(setMe)
+      .catch((reason) =>
+        setMeError(
+          reason instanceof Error
+            ? reason.message
+            : "Não foi possível carregar seu perfil.",
+        ),
+      )
       .finally(() => setLoadingMe(false));
   }, [session.data]);
   if (session.isPending || loadingMe)
@@ -1090,10 +1207,10 @@ export default function Page() {
       </div>
     );
   if (!session.data) return <AuthScreen />;
-  if (!me)
+  if (meError || !me)
     return (
       <div className="loading-screen">
-        Não foi possível carregar seu perfil.
+        {meError || "Não foi possível carregar seu perfil."}
       </div>
     );
   if (me.onboardingRequired) return <Onboarding me={me} />;

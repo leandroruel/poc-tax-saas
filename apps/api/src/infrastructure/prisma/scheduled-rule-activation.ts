@@ -1,14 +1,6 @@
 import type { PrismaClient } from "@prisma/client";
 import { v7 as uuidv7 } from "uuid";
-
-function brazilianToday(now: Date): string {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/Sao_Paulo",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(now);
-}
+import { businessDateInBrazil } from "../../application/time/business-calendar.js";
 
 /**
  * Records the activation edge for operations/notifications. Calculation
@@ -19,7 +11,7 @@ export async function recordScheduledRuleActivations(
   prisma: PrismaClient,
   now = new Date(),
 ): Promise<number> {
-  const today = brazilianToday(now);
+  const today = businessDateInBrazil(now);
   const instant = new Date(`${today}T00:00:00.000Z`);
   const effectiveVersions = await prisma.taxRuleVersion.findMany({
     where: {
@@ -30,31 +22,34 @@ export async function recordScheduledRuleActivations(
     select: { id: true, effectiveFrom: true },
   });
 
-  let recorded = 0;
-  for (const version of effectiveVersions) {
-    const existing = await prisma.auditLog.findFirst({
-      where: {
-        action: "rule_version.became_active",
-        entityType: "TaxRuleVersion",
-        entityId: version.id,
+  if (effectiveVersions.length === 0) return 0;
+
+  const alreadyRecorded = await prisma.auditLog.findMany({
+    where: {
+      action: "rule_version.became_active",
+      entityType: "TaxRuleVersion",
+      entityId: { in: effectiveVersions.map((version) => version.id) },
+    },
+    select: { entityId: true },
+  });
+  const recordedIds = new Set(alreadyRecorded.map((row) => row.entityId));
+  const pending = effectiveVersions.filter(
+    (version) => !recordedIds.has(version.id),
+  );
+  if (pending.length === 0) return 0;
+
+  const { count } = await prisma.auditLog.createMany({
+    data: pending.map((version) => ({
+      id: uuidv7(),
+      action: "rule_version.became_active",
+      entityType: "TaxRuleVersion",
+      entityId: version.id,
+      after: {
+        effectiveFrom: version.effectiveFrom.toISOString().slice(0, 10),
       },
-      select: { id: true },
-    });
-    if (!existing) {
-      await prisma.auditLog.create({
-        data: {
-          id: uuidv7(),
-          action: "rule_version.became_active",
-          entityType: "TaxRuleVersion",
-          entityId: version.id,
-          after: {
-            effectiveFrom: version.effectiveFrom.toISOString().slice(0, 10),
-          },
-          metadata: { trigger: "scheduled_activation", observedOn: today },
-        },
-      });
-      recorded++;
-    }
-  }
-  return recorded;
+      metadata: { trigger: "scheduled_activation", observedOn: today },
+    })),
+    skipDuplicates: true,
+  });
+  return count;
 }

@@ -1,6 +1,9 @@
 import { IofEngine } from "../domain/iof/iof-engine.js";
 import type { IofOperation } from "../domain/iof/operation.js";
-import type { IofOutcome } from "../domain/iof/outcome.js";
+import {
+  selectedRuleIdOf,
+  type IofOutcome,
+} from "../domain/iof/outcome.js";
 import type { TenantContext } from "../domain/tenancy/tenant-context.js";
 import type { CalculationJournal } from "./ports/calculation-journal.js";
 import type { RuleCatalog } from "./ports/rule-catalog.js";
@@ -33,12 +36,7 @@ export function createCalculateTax(dependencies: {
       tenant: command.tenant,
       operation: command.operation,
     });
-    const selectedRuleId =
-      outcome.kind === "calculated"
-        ? outcome.result.ruleId
-        : outcome.kind === "not_applicable"
-          ? outcome.ruleId
-          : undefined;
+    const selectedRuleId = selectedRuleIdOf(outcome);
     const selectedRule = rules.find((rule) => rule.id === selectedRuleId);
     const { calculationId } = await dependencies.calculationJournal.record({
       command,

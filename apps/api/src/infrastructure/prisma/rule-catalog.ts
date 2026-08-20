@@ -1,33 +1,16 @@
 import { Prisma, type PrismaClient } from "@prisma/client";
 import { z } from "zod";
+import {
+  serializedTaxTreatmentSchema,
+  toDomainTaxTreatment,
+} from "../../application/codecs/tax-treatment-codec.js";
 import type { RuleCatalog } from "../../application/ports/rule-catalog.js";
 import type { LocalDate } from "../../domain/iof/operation.js";
-import type { IofRuleVersion, TaxTreatment } from "../../domain/iof/rule.js";
-import { reais } from "../../domain/shared/money.js";
+import type { IofRuleVersion } from "../../domain/iof/rule.js";
 
-const treatmentSchema = z.discriminatedUnion("kind", [
-  z.object({
-    kind: z.literal("rate"),
-    rate: z.object({
-      percentage: z.string(),
-      unit: z.enum(["percent", "daily_percent"]),
-    }),
-    additionalRate: z
-      .object({
-        percentage: z.string(),
-        unit: z.enum(["percent", "daily_percent"]),
-      })
-      .optional(),
-    basePolicy: z.discriminatedUnion("kind", [
-      z.object({ kind: z.literal("full_amount") }),
-      z.object({
-        kind: z.literal("aggregate_threshold"),
-        scope: z.enum(["same_insurer", "all_insurers"]),
-        threshold: z.string(),
-      }),
-    ]),
-  }),
-  z.object({ kind: z.literal("not_applicable"), reason: z.string() }),
+const operationTypeSchema = z.enum([
+  "credit_pj_principal_defined",
+  "insurance_vgbl",
 ]);
 
 type RuleVersionRow = Prisma.TaxRuleVersionGetPayload<{
@@ -38,30 +21,25 @@ function localDate(date: Date): LocalDate {
   return date.toISOString().slice(0, 10);
 }
 
-export function mapRuleVersion(row: RuleVersionRow): IofRuleVersion {
-  const treatment = treatmentSchema.parse(row.treatment);
-  const domainTreatment: TaxTreatment =
-    treatment.kind === "not_applicable"
-      ? treatment
-      : treatment.basePolicy.kind === "aggregate_threshold"
-        ? {
-            ...treatment,
-            basePolicy: {
-              ...treatment.basePolicy,
-              threshold: reais(treatment.basePolicy.threshold),
-            },
-          }
-        : { ...treatment, basePolicy: { kind: "full_amount" } };
+export function mapRuleVersion(row: RuleVersionRow): IofRuleVersion | null {
+  const treatment = serializedTaxTreatmentSchema.safeParse(row.treatment);
+  const operationType = operationTypeSchema.safeParse(row.rule.operationType);
+  if (!treatment.success || !operationType.success) {
+    console.error("invalid_tax_rule_version", {
+      ruleVersionId: row.id,
+      treatmentError: treatment.error?.issues,
+      operationTypeError: operationType.error?.issues,
+    });
+    return null;
+  }
   return {
     id: row.id,
     version: row.version,
     status: row.editorialStatus,
-    operationType: z
-      .enum(["credit_pj_principal_defined", "insurance_vgbl"])
-      .parse(row.rule.operationType),
+    operationType: operationType.data,
     effectiveFrom: localDate(row.effectiveFrom),
     effectiveTo: row.effectiveTo ? localDate(row.effectiveTo) : null,
-    treatment: domainTreatment,
+    treatment: toDomainTaxTreatment(treatment.data),
     legalBasis: row.legalBasis,
     sourceUrl: row.sourceUrl,
   };
@@ -84,7 +62,10 @@ export function createPrismaRuleCatalog(prisma: PrismaClient): RuleCatalog {
         include: { rule: true },
         orderBy: [{ rule: { operationType: "asc" } }, { version: "desc" }],
       });
-      return rows.map(mapRuleVersion);
+      return rows.flatMap((row) => {
+        const mapped = mapRuleVersion(row);
+        return mapped ? [mapped] : [];
+      });
     },
   };
 }

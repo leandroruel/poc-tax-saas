@@ -32,3 +32,12 @@ export interface VgblOperation {
 }
 
 export type IofOperation = CreditOperation | VgblOperation;
+
+export function assertValidIofOperation(operation: IofOperation): void {
+  if (
+    operation.kind === "credit" &&
+    (!Number.isSafeInteger(operation.termInDays) || operation.termInDays <= 0)
+  ) {
+    throw new RangeError("Credit term must be a positive safe integer.");
+  }
+}

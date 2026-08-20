@@ -72,10 +72,19 @@ function developmentKey(purpose: string): Buffer {
 
 function environmentKey(name: string, developmentPurpose: string): Buffer {
   const configured = process.env[name];
-  if (configured) return Buffer.from(configured, "base64");
-  if (process.env.NODE_ENV === "production")
-    throw new Error(`${name} is required in production`);
-  return developmentKey(developmentPurpose);
+  if (configured) {
+    const decoded = Buffer.from(configured, "base64");
+    if (decoded.toString("base64") !== configured) {
+      throw new Error(`${name} must be canonical base64`);
+    }
+    return decoded;
+  }
+  if (process.env.TAXMAN_ALLOW_INSECURE_DEV_SECRETS === "true") {
+    return developmentKey(developmentPurpose);
+  }
+  throw new Error(
+    `${name} is required. Set TAXMAN_ALLOW_INSECURE_DEV_SECRETS=true only for disposable local development.`,
+  );
 }
 
 export function createEnvironmentTaxIdVault(): TaxIdVault {

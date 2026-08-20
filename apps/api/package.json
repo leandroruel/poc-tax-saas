@@ -11,7 +11,7 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "seed": "tsx prisma/seed/index.ts",
-    "test": "vitest run"
+    "test": "TAXMAN_ALLOW_INSECURE_DEV_SECRETS=true vitest run"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.0",
