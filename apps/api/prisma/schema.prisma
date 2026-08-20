@@ -68,6 +68,17 @@ enum NotificationType {
   rule_activated
 }
 
+enum ExportArtifactStatus {
+  queued
+  ready
+  failed
+}
+
+enum ExportArtifactFormat {
+  csv
+  evidence_json
+}
+
 model User {
   id            String       @id
   name          String
@@ -91,6 +102,7 @@ model User {
   importMappings  ImportMappingProfile[]
   backgroundJobs  BackgroundJob[]
   notifications   Notification[]
+  exports         ExportArtifact[]
 }
 
 model Session {
@@ -159,6 +171,7 @@ model Organization {
   importMappings ImportMappingProfile[]
   backgroundJobs BackgroundJob[]
   notifications  Notification[]
+  exports        ExportArtifact[]
 }
 
 model Member {
@@ -355,6 +368,7 @@ model BackgroundJob {
   organizationId   String              @db.Uuid
   createdById      String
   batchId          String?
+  exportId         String?
   type             String
   status           BackgroundJobStatus @default(queued)
   payload          Json
@@ -373,11 +387,38 @@ model BackgroundJob {
   organization     Organization        @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   createdBy        User                @relation(fields: [createdById], references: [id], onDelete: Restrict)
   batch            ImportBatch?        @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  export           ExportArtifact?     @relation(fields: [exportId], references: [id], onDelete: Restrict)
   attempts         JobAttempt[]
 
   @@index([organizationId, createdAt(sort: Desc), id(sort: Desc)])
   @@index([createdById])
   @@index([batchId])
+  @@index([exportId])
+  @@index([status, updatedAt])
+}
+
+model ExportArtifact {
+  id             String               @id
+  organizationId String               @db.Uuid
+  createdById    String
+  status         ExportArtifactStatus @default(queued)
+  format         ExportArtifactFormat
+  columns        Json
+  filters        Json
+  objectKey      String?              @unique
+  fileName       String?
+  contentType    String?
+  rowCount       Int                  @default(0)
+  errorMessage   String?
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
+  readyAt        DateTime?
+  organization   Organization         @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  createdBy      User                 @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  jobs           BackgroundJob[]
+
+  @@index([organizationId, createdAt(sort: Desc), id(sort: Desc)])
+  @@index([createdById])
   @@index([status, updatedAt])
 }
 
