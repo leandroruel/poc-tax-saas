@@ -1,9 +1,8 @@
-import type { LocalDate } from "../../domain/operation.js";
-import type { TaxRule } from "../../domain/tax-rule.js";
+import type { LocalDate } from "../../domain/iof/operation.js";
+import type { IofRuleVersion } from "../../domain/iof/rule.js";
 
 export interface RuleCatalog {
-  findEffective(query: {
-    taxType: "IOF";
-    asOf: LocalDate;
-  }): Promise<readonly TaxRule[]>;
+  findApprovedEffective(query: {
+    occurredOn: LocalDate;
+  }): Promise<readonly IofRuleVersion[]>;
 }

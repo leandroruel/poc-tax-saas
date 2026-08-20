@@ -1,0 +1,20 @@
+# Domínio do TaxMan
+
+Esta pasta não importa Fastify, Prisma ou Better Auth. Ela contém somente regras que um desenvolvedor precisa ler para entender o negócio.
+
+- `iof/operation.ts`: os únicos fatos de operação aceitos no MVP — crédito PJ com principal/prazo definidos e VGBL.
+- `iof/rule.ts`: contrato tipado de uma versão de regra e de seu tratamento tributário.
+- `iof/iof-engine.ts`: decisão determinística do IOF. A data da operação escolhe a vigência; somente versões aprovadas participam.
+- `iof/outcome.ts`: todos os resultados possíveis, inclusive falta de contexto e operação não suportada.
+- `rule-governance/rule-version-lifecycle.ts`: workflow editorial e status de implantação derivados da vigência.
+- `identity/`: normalização e validação de CPF/CNPJ. Criptografia é responsabilidade da infraestrutura.
+- `tenancy/`: linguagem comum do tenant; a entidade persistida é `Organization` do Better Auth.
+- `shared/money.ts`: dinheiro em centavos com `bigint`, sem aritmética tributária em ponto flutuante.
+
+O caminho de uma requisição é:
+
+`HTTP → caso de uso → portas → domínio → adaptadores Prisma`
+
+Regras globais nunca recebem `tenantId`. Dados de cálculo sempre recebem o tenant derivado da sessão autenticada.
+
+> O catálogo inicial implementa o recorte acordado para o MVP e deve ser validado por profissional tributário antes de uso produtivo ou tomada de decisão fiscal.

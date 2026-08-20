@@ -1,168 +1,252 @@
-import { Prisma, PrismaClient } from "@prisma/client";
+import { createHash } from "node:crypto";
+import { Prisma } from "@prisma/client";
+import { auth } from "../../src/infrastructure/auth/auth.js";
+import { prisma } from "../../src/infrastructure/prisma/prisma-client.js";
 
-const prisma = new PrismaClient();
-const DEMO_TENANT_ID = "tenant_demo";
-const REVIEWER = "seed:official-sources-2026-08-19";
+const adminEmail = process.env.TAXMAN_ADMIN_EMAIL ?? "admin@taxman.local";
+const adminPassword = process.env.TAXMAN_ADMIN_PASSWORD ?? "TaxMan-local-2026!";
+const planaltoSource =
+  "https://www.planalto.gov.br/ccivil_03/_ato2007-2010/2007/decreto/d6306compilado.htm";
+const suspensionSource =
+  "https://noticias.stf.jus.br/postsnoticias/decisao-que-restabeleceu-aumento-do-iof-nao-alcanca-periodo-de-suspensao-esclarece-stf/";
+const vgblSource =
+  "https://www.gov.br/susep/pt-br/central-de-conteudos/noticias/2025/junho/novo-decreto-atualiza-regra-de-iof-para-planos-vgbl";
 
-const fullAmount = { kind: "full_amount" } satisfies Prisma.InputJsonObject;
-const noConditions = [] satisfies Prisma.InputJsonArray;
-const vgblConditions = [
-  { kind: "person_type_is", role: "insured", value: "PF" },
-  { kind: "payer_is", value: "policyholder" },
-] satisfies Prisma.InputJsonArray;
-const simplesConditions = [
-  { kind: "maximum_amount", amount: "30000.00" },
-] satisfies Prisma.InputJsonArray;
-const fidcConditions = [
-  { kind: "market_is", value: "primary" },
-] satisfies Prisma.InputJsonArray;
-
-interface RulePeriod {
+interface SeedVersion {
+  id: string;
   version: number;
-  effectiveFrom: Date;
-  effectiveTo: Date | null;
-  vgblThreshold: string;
-  vgblScope: "same_insurer" | "all_insurers";
-  vgblLegalBasis: string;
+  effectiveFrom: string;
+  effectiveTo: string | null;
+  treatment: Prisma.InputJsonObject;
+  legalBasis: string;
+  sourceUrl: string;
+  changeReason: string;
 }
 
-function rulesForPeriod(period: RulePeriod): Prisma.TaxRuleCreateManyInput[] {
-  const common = {
-    taxType: "IOF",
-    effectiveFrom: period.effectiveFrom,
-    effectiveTo: period.effectiveTo,
-    version: period.version,
-    status: "in_force" as const,
-    reviewedBy: REVIEWER,
+interface SeedRule {
+  id: string;
+  code: string;
+  operationType: "credit_pj_principal_defined" | "insurance_vgbl";
+  versions: SeedVersion[];
+}
+
+function creditTreatment(dailyPercentage: string): Prisma.InputJsonObject {
+  return {
+    kind: "rate",
+    rate: { percentage: dailyPercentage, unit: "daily_percent" },
+    additionalRate: { percentage: "0.38", unit: "percent" },
+    basePolicy: { kind: "full_amount" },
   };
-
-  return [
-    {
-      ...common,
-      operationType: "insurance_vgbl",
-      rate: "5",
-      rateUnit: "percent",
-      baseRule: "Only the part of the current contribution that crosses the accumulated threshold",
-      legalBasis: period.vgblLegalBasis,
-      conditions: vgblConditions,
-      basePolicy: {
-        kind: "aggregate_threshold",
-        scope: period.vgblScope,
-        threshold: period.vgblThreshold,
-      },
-    },
-    {
-      ...common,
-      operationType: "credit_pj",
-      rate: "0.0082",
-      rateUnit: "daily_percent",
-      additionalRate: "0.38",
-      additionalRateUnit: "percent",
-      baseRule: "Principal at 0.0082% per day, capped at 365 days, plus 0.38%",
-      legalBasis: "Decreto 6.306/2007, art. 7º, I a V, § 1º e § 15",
-      conditions: noConditions,
-      basePolicy: fullAmount,
-    },
-    {
-      ...common,
-      operationType: "credit_simples_mei",
-      rate: "0.00274",
-      rateUnit: "daily_percent",
-      additionalRate: "0.38",
-      additionalRateUnit: "percent",
-      baseRule: "Simples Nacional/MEI borrower and principal up to R$ 30,000",
-      legalBasis: "Decreto 6.306/2007, art. 7º, VI, § 1º e § 15; art. 45, II",
-      conditions: simplesConditions,
-      basePolicy: fullAmount,
-    },
-    {
-      ...common,
-      operationType: "foreign_exchange_outflow",
-      rate: "3.5",
-      rateUnit: "percent",
-      baseRule: "Non-exempt foreign-exchange outflow",
-      legalBasis: "Decreto 6.306/2007, art. 15-B, XX a XXIV",
-      conditions: noConditions,
-      basePolicy: fullAmount,
-    },
-    {
-      ...common,
-      operationType: "foreign_exchange_inflow",
-      rate: "0.38",
-      rateUnit: "percent",
-      baseRule: "Non-exempt foreign-exchange inflow",
-      legalBasis: "Decreto 6.306/2007, art. 15-B, XXV",
-      conditions: noConditions,
-      basePolicy: fullAmount,
-    },
-    {
-      ...common,
-      operationType: "foreign_exchange_investment",
-      rate: "1.1",
-      rateUnit: "percent",
-      baseRule: "Outbound transfer for investment purposes",
-      legalBasis: "Decreto 6.306/2007, art. 15-B, XXI-A",
-      conditions: noConditions,
-      basePolicy: fullAmount,
-    },
-    {
-      ...common,
-      effectiveFrom:
-        period.version === 1 ? new Date("2025-06-14T00:00:00.000Z") : period.effectiveFrom,
-      operationType: "investment_fidc",
-      rate: "0.38",
-      rateUnit: "percent",
-      baseRule: "Primary acquisition of FIDC quotas subscribed after 13 June 2025",
-      legalBasis: "Decreto 6.306/2007, art. 32-D",
-      conditions: fidcConditions,
-      basePolicy: fullAmount,
-    },
-  ];
 }
 
-const rules = [
-  ...rulesForPeriod({
-    version: 1,
-    effectiveFrom: new Date("2025-06-11T00:00:00.000Z"),
-    effectiveTo: new Date("2026-01-01T00:00:00.000Z"),
-    vgblThreshold: "300000.00",
-    vgblScope: "same_insurer",
-    vgblLegalBasis: "Decreto 6.306/2007, art. 22, § 1º, i e j; § 5º, VI",
-  }),
-  ...rulesForPeriod({
-    version: 2,
-    effectiveFrom: new Date("2026-01-01T00:00:00.000Z"),
-    effectiveTo: null,
-    vgblThreshold: "600000.00",
-    vgblScope: "all_insurers",
-    vgblLegalBasis: "Decreto 6.306/2007, art. 22, § 1º, e e j; § 5º, V",
-  }),
+function vgblTreatment(
+  scope: "same_insurer" | "all_insurers",
+  threshold: string,
+): Prisma.InputJsonObject {
+  return {
+    kind: "rate",
+    rate: { percentage: "5", unit: "percent" },
+    basePolicy: { kind: "aggregate_threshold", scope, threshold },
+  };
+}
+
+const rules: SeedRule[] = [
+  {
+    id: "iof-credit-pj-principal-defined",
+    code: "IOF_CREDIT_PJ_PRINCIPAL_DEFINED",
+    operationType: "credit_pj_principal_defined",
+    versions: [
+      {
+        id: "iof-credit-pj-v1",
+        version: 1,
+        effectiveFrom: "2025-01-01",
+        effectiveTo: "2025-06-11",
+        treatment: creditTreatment("0.0041"),
+        legalBasis: "Decreto 6.306/2007, art. 7º, I, § 1º e § 15",
+        sourceUrl: planaltoSource,
+        changeReason: "Regra anterior ao Decreto 12.499/2025.",
+      },
+      {
+        id: "iof-credit-pj-v2",
+        version: 2,
+        effectiveFrom: "2025-06-11",
+        effectiveTo: "2025-06-27",
+        treatment: creditTreatment("0.0082"),
+        legalBasis: "Decreto 6.306/2007, art. 7º, I, § 1º e § 15",
+        sourceUrl: planaltoSource,
+        changeReason: "Majoração introduzida pelo Decreto 12.499/2025.",
+      },
+      {
+        id: "iof-credit-pj-v3",
+        version: 3,
+        effectiveFrom: "2025-06-27",
+        effectiveTo: "2025-07-17",
+        treatment: creditTreatment("0.0041"),
+        legalBasis:
+          "Decreto 6.306/2007 e período de suspensão do Decreto 12.499/2025",
+        sourceUrl: suspensionSource,
+        changeReason:
+          "Operações no período de suspensão não recebem a majoração.",
+      },
+      {
+        id: "iof-credit-pj-v4",
+        version: 4,
+        effectiveFrom: "2025-07-17",
+        effectiveTo: null,
+        treatment: creditTreatment("0.0082"),
+        legalBasis: "Decreto 6.306/2007, art. 7º, I, § 1º e § 15",
+        sourceUrl: planaltoSource,
+        changeReason: "Majoração restabelecida pelo STF.",
+      },
+    ],
+  },
+  {
+    id: "iof-insurance-vgbl",
+    code: "IOF_INSURANCE_VGBL",
+    operationType: "insurance_vgbl",
+    versions: [
+      {
+        id: "iof-vgbl-v1",
+        version: 1,
+        effectiveFrom: "2025-01-01",
+        effectiveTo: "2025-06-11",
+        treatment: { kind: "not_applicable", reason: "before_decree_12499" },
+        legalBasis: "Regra anterior ao Decreto 12.499/2025",
+        sourceUrl: planaltoSource,
+        changeReason: "Não incidência anterior à nova hipótese do VGBL.",
+      },
+      {
+        id: "iof-vgbl-v2",
+        version: 2,
+        effectiveFrom: "2025-06-11",
+        effectiveTo: "2025-06-27",
+        treatment: vgblTreatment("same_insurer", "300000.00"),
+        legalBasis: "Decreto 6.306/2007, art. 22, § 1º, i e j; § 5º, VI",
+        sourceUrl: vgblSource,
+        changeReason: "Limite de R$ 300 mil por seguradora em 2025.",
+      },
+      {
+        id: "iof-vgbl-v3",
+        version: 3,
+        effectiveFrom: "2025-06-27",
+        effectiveTo: "2025-07-17",
+        treatment: { kind: "not_applicable", reason: "decree_12499_suspended" },
+        legalBasis: "Período de suspensão do Decreto 12.499/2025",
+        sourceUrl: suspensionSource,
+        changeReason:
+          "Não incidência nas operações realizadas durante a suspensão.",
+      },
+      {
+        id: "iof-vgbl-v4",
+        version: 4,
+        effectiveFrom: "2025-07-17",
+        effectiveTo: "2026-01-01",
+        treatment: vgblTreatment("same_insurer", "300000.00"),
+        legalBasis: "Decreto 6.306/2007, art. 22, § 1º, i e j; § 5º, VI",
+        sourceUrl: vgblSource,
+        changeReason: "Regra de 2025 restabelecida.",
+      },
+      {
+        id: "iof-vgbl-v5",
+        version: 5,
+        effectiveFrom: "2026-01-01",
+        effectiveTo: null,
+        treatment: vgblTreatment("all_insurers", "600000.00"),
+        legalBasis: "Decreto 6.306/2007, art. 22, § 1º, e e j; § 5º, V",
+        sourceUrl: planaltoSource,
+        changeReason:
+          "Limite anual de R$ 600 mil agregado entre seguradoras a partir de 2026.",
+      },
+    ],
+  },
 ];
 
-async function main() {
-  await prisma.tenant.upsert({
-    where: { id: DEMO_TENANT_ID },
-    update: {},
-    create: { id: DEMO_TENANT_ID, name: "Demo Tenant", config: {} },
-  });
-
-  await prisma.$transaction(
-    rules.map((rule) =>
-      prisma.taxRule.upsert({
-        where: {
-          taxType_operationType_version: {
-            taxType: rule.taxType,
-            operationType: rule.operationType,
-            version: rule.version,
-          },
-        },
-        update: rule,
-        create: rule,
-      })
+function snapshotHash(rule: SeedRule, version: SeedVersion): string {
+  return createHash("sha256")
+    .update(
+      JSON.stringify({
+        code: rule.code,
+        operationType: rule.operationType,
+        ...version,
+      }),
     )
-  );
+    .digest("hex");
+}
 
-  console.log(`Seeded ${rules.length} versioned IOF rules for tenant ${DEMO_TENANT_ID}`);
+async function ensureAdmin() {
+  let user = await prisma.user.findUnique({ where: { email: adminEmail } });
+  if (user) {
+    const credential = await prisma.account.findFirst({
+      where: { userId: user.id, providerId: "credential" },
+    });
+    if (!credential) {
+      await prisma.user.delete({ where: { id: user.id } });
+      user = null;
+    }
+  }
+  if (!user) {
+    await auth.api.signUpEmail({
+      body: {
+        email: adminEmail,
+        password: adminPassword,
+        name: "TaxMan Admin",
+      },
+    });
+    user = await prisma.user.findUniqueOrThrow({
+      where: { email: adminEmail },
+    });
+  }
+  return prisma.user.update({
+    where: { id: user.id },
+    data: { platformRole: "super_admin" },
+  });
+}
+
+async function main() {
+  const admin = await ensureAdmin();
+  for (const rule of rules) {
+    await prisma.taxRule.upsert({
+      where: { code: rule.code },
+      update: { operationType: rule.operationType },
+      create: {
+        id: rule.id,
+        code: rule.code,
+        operationType: rule.operationType,
+      },
+    });
+    for (const version of rule.versions) {
+      const data = {
+        editorialStatus: "approved" as const,
+        effectiveFrom: new Date(`${version.effectiveFrom}T00:00:00.000Z`),
+        effectiveTo: version.effectiveTo
+          ? new Date(`${version.effectiveTo}T00:00:00.000Z`)
+          : null,
+        treatment: version.treatment,
+        legalBasis: version.legalBasis,
+        sourceUrl: version.sourceUrl,
+        changeReason: version.changeReason,
+        snapshotHash: snapshotHash(rule, version),
+        createdById: admin.id,
+        reviewedById: admin.id,
+        approvedAt: new Date(),
+      };
+      await prisma.taxRuleVersion.upsert({
+        where: {
+          ruleId_version: { ruleId: rule.id, version: version.version },
+        },
+        update: data,
+        create: {
+          id: version.id,
+          ruleId: rule.id,
+          version: version.version,
+          ...data,
+        },
+      });
+    }
+  }
+  console.log(
+    `Seeded ${rules.reduce((total, rule) => total + rule.versions.length, 0)} approved IOF rule versions and ${adminEmail}.`,
+  );
 }
 
 main()
