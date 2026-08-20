@@ -1,0 +1,330 @@
+export type OrganizationRole = "owner" | "admin" | "operator" | "reviewer";
+export type OrganizationPermission =
+  | "dashboard:read"
+  | "calculation:read"
+  | "calculation:create"
+  | "company:read"
+  | "team:manage"
+  | "audit:read"
+  | "batch:read"
+  | "batch:create"
+  | "batch:review"
+  | "job:read"
+  | "job:retry"
+  | "notification:read"
+  | "export:read"
+  | "export:create";
+export type TenantSegment = "credit_provider" | "insurance_pension";
+
+export type Me = {
+  id: string;
+  name: string;
+  email: string;
+  platformRole: "user" | "super_admin";
+  onboardingRequired: boolean;
+  profileRequired: boolean;
+  membership: null | {
+    role: OrganizationRole;
+    permissions: OrganizationPermission[];
+    organization: {
+      id: string;
+      name: string;
+      slug: string;
+      segment: TenantSegment;
+    };
+  };
+};
+
+export type CalculationOperationType =
+  | "credit_pj_principal_defined"
+  | "insurance_vgbl";
+
+export type StoredIofOperation =
+  | {
+      kind: "credit";
+      modality: "principal_defined";
+      occurredOn: string;
+      amount: string;
+      borrower: { personType: "PJ" };
+      termInDays: number;
+    }
+  | {
+      kind: "vgbl";
+      occurredOn: string;
+      amount: string;
+      insured: { personType: "PF" };
+      payer: "policyholder" | "employer";
+      priorContributions: {
+        sameInsurer?: string;
+        allInsurers?: string;
+      };
+    };
+
+export type CalculationStatus =
+  | "calculated"
+  | "unsupported"
+  | "not_applicable"
+  | "requires_context"
+  | "no_rule"
+  | "ambiguous_rule";
+
+export type CalculationOutcome =
+  | {
+      kind: "calculated";
+      result: {
+        amount: string;
+        taxableBase: string;
+        grossBase: string;
+        ruleId: string;
+        ruleVersion: number;
+        operationType: CalculationOperationType;
+        effectivePeriod: { from: string; to: string | null };
+        rate: { percentage: string; unit: "percent" | "daily_percent" };
+        additionalRate?: {
+          percentage: string;
+          unit: "percent" | "daily_percent";
+        };
+        legalBasis: string;
+        evidence: string[];
+      };
+    }
+  | { kind: "unsupported"; reason: string }
+  | { kind: "not_applicable"; ruleId: string; reason: string }
+  | { kind: "requires_context"; missing: string[] }
+  | { kind: "no_rule"; operationType: CalculationOperationType }
+  | { kind: "ambiguous_rule"; ruleIds: string[] };
+
+export type CalculationRecord = {
+  id: string;
+  operationType: CalculationOperationType;
+  occurredOn: string;
+  input: StoredIofOperation;
+  outcome: CalculationOutcome;
+  ruleSnapshot: null | {
+    id: string;
+    version: number;
+    status: "draft" | "pending_review" | "approved" | "rejected" | "revoked";
+    operationType: CalculationOperationType;
+    effectiveFrom: string;
+    effectiveTo: string | null;
+    treatment: unknown;
+    legalBasis: string;
+    sourceUrl?: string;
+  };
+  recalculatesId: string | null;
+  createdAt: string;
+  createdBy: { id: string; name: string };
+};
+
+export type CalculationPage = {
+  items: CalculationRecord[];
+  nextCursor: string | null;
+};
+
+export type DashboardOverview = {
+  totalCalculations: number;
+  ruleVersionCount: number;
+  calculatedTaxAmount30Days: string;
+  attentionRequired: number;
+  activity: {
+    date: string;
+    calculations: number;
+    taxAmount: string;
+  }[];
+  recentCalculations: CalculationRecord[];
+};
+
+export type Company = {
+  id: string;
+  name: string;
+  slug: string;
+  segment: TenantSegment;
+  createdAt: string;
+  members: {
+    id: string;
+    role: OrganizationRole;
+    createdAt: string;
+    user: { id: string; name: string; email: string };
+  }[];
+};
+
+export type AuditCategory =
+  | "calculations"
+  | "imports"
+  | "exports"
+  | "jobs"
+  | "organization";
+
+export type AuditEventPage = {
+  items: {
+    id: string;
+    action: string;
+    category: AuditCategory;
+    entityType: string;
+    entityId: string;
+    occurredAt: string;
+    actor: { id: string; name: string } | null;
+  }[];
+  nextCursor: string | null;
+};
+
+export type NotificationFeed = {
+  unreadCount: number;
+  items: {
+    id: string;
+    type:
+      | "batch_completed"
+      | "batch_requires_review"
+      | "job_failed"
+      | "job_recovered"
+      | "export_ready"
+      | "rule_scheduled"
+      | "rule_activated";
+    title: string;
+    message: string;
+    entityType: string;
+    entityId: string;
+    createdAt: string;
+    readAt: string | null;
+  }[];
+};
+
+export type ImportBatchStatus =
+  | "draft"
+  | "validating"
+  | "ready"
+  | "processing"
+  | "requires_review"
+  | "closed"
+  | "failed"
+  | "cancelled";
+
+export type ImportBatch = {
+  id: string;
+  status: ImportBatchStatus;
+  originalFileName: string | null;
+  operationType: CalculationOperationType | null;
+  headers: string[];
+  totalRows: number;
+  validRows: number;
+  invalidRows: number;
+  processedRows: number;
+  failedRows: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ImportMapping =
+  | {
+      operationType: "credit_pj_principal_defined";
+      dateFormat: "yyyy-mm-dd" | "dd/mm/yyyy";
+      numberFormat: "decimal_dot" | "decimal_comma";
+      columns: { occurredOn: string; amount: string; termInDays: string };
+    }
+  | {
+      operationType: "insurance_vgbl";
+      dateFormat: "yyyy-mm-dd" | "dd/mm/yyyy";
+      numberFormat: "decimal_dot" | "decimal_comma";
+      columns: {
+        occurredOn: string;
+        amount: string;
+        payer: string;
+        priorSameInsurer?: string;
+        priorAllInsurers?: string;
+      };
+    };
+
+export type ImportMappingProfile = {
+  id: string;
+  name: string;
+  operationType: CalculationOperationType;
+  mapping: ImportMapping;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ImportBatchDetail = ImportBatch & {
+  mapping: unknown;
+  rowErrors: {
+    rowNumber: number;
+    rawData: Record<string, string>;
+    errors: { field: string; code: string; message: string }[];
+  }[];
+};
+
+export type ImportBatchReviewRow = {
+  rowNumber: number;
+  status: "invalid" | "failed";
+  rawData: Record<string, string>;
+  normalizedInput: Record<string, unknown> | null;
+  errors: { field: string; code: string; message: string }[];
+  calculationId: string | null;
+};
+
+export type ImportBatchReviewPage = {
+  items: ImportBatchReviewRow[];
+  nextRowNumber: number | null;
+};
+
+export type BackgroundJob = {
+  id: string;
+  batchId: string | null;
+  exportId: string | null;
+  type: string;
+  status: "queued" | "active" | "retrying" | "completed" | "failed" | "cancelled";
+  progress: { current: number; total: number };
+  attemptsMade: number;
+  maxAttempts: number;
+  correlationId: string;
+  lastErrorCode: string | null;
+  lastErrorMessage: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type BackgroundJobDetail = BackgroundJob & {
+  attempts: {
+    id: string;
+    number: number;
+    status: "active" | "completed" | "failed";
+    correlationId: string;
+    errorCode: string | null;
+    errorMessage: string | null;
+    startedAt: string;
+    finishedAt: string | null;
+  }[];
+};
+
+export type CalculationExportColumn =
+  | "calculationId"
+  | "operationType"
+  | "occurredOn"
+  | "status"
+  | "taxAmount"
+  | "taxableBase"
+  | "grossBase"
+  | "ruleId"
+  | "ruleVersion"
+  | "legalBasis"
+  | "createdAt"
+  | "createdBy";
+
+export type CalculationExport = {
+  id: string;
+  status: "queued" | "ready" | "failed";
+  format: "csv" | "evidence_json";
+  columns: CalculationExportColumn[];
+  filters: {
+    calculationId?: string;
+    operationType?: CalculationOperationType;
+    status?: CalculationStatus;
+    occurredFrom?: string;
+    occurredTo?: string;
+    createdThrough: string;
+  };
+  fileName: string | null;
+  rowCount: number;
+  errorMessage: string | null;
+  createdAt: string;
+  readyAt: string | null;
+};

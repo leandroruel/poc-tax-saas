@@ -1,62 +1,20 @@
 import type { PrismaClient } from "@prisma/client";
 import type { TenantQueries } from "../../application/ports/tenant-queries.js";
+import {
+  organizationPermissions,
+  parseOrganizationRole,
+} from "../../domain/tenancy/organization-access.js";
 
-function calculationView(calculation: {
-  id: string;
-  operationType: string;
-  occurredOn: Date;
-  input: unknown;
-  outcome: unknown;
-  ruleSnapshot: unknown;
-  recalculatesId: string | null;
-  createdAt: Date;
-}) {
-  return {
-    id: calculation.id,
-    operationType: calculation.operationType,
-    occurredOn: calculation.occurredOn.toISOString().slice(0, 10),
-    input: calculation.input,
-    outcome: calculation.outcome,
-    ruleSnapshot: calculation.ruleSnapshot,
-    recalculatesId: calculation.recalculatesId,
-    createdAt: calculation.createdAt.toISOString(),
-  };
+function requiredRole(value: string) {
+  const role = parseOrganizationRole(value);
+  if (!role) throw new Error(`Unsupported organization role: ${value}`);
+  return role;
 }
 
 export function createPrismaTenantQueries(prisma: PrismaClient): TenantQueries {
   return {
-    async overview(tenantId) {
-      const [count, recent, ruleVersionCount] = await Promise.all([
-        prisma.calculation.count({ where: { organizationId: tenantId } }),
-        prisma.calculation.findMany({
-          where: { organizationId: tenantId },
-          orderBy: { createdAt: "desc" },
-          take: 5,
-        }),
-        prisma.taxRuleVersion.count({ where: { editorialStatus: "approved" } }),
-      ]);
-      return {
-        totalCalculations: count,
-        ruleVersionCount,
-        recentCalculations: recent.map(calculationView),
-      };
-    },
-    async calculations(tenantId) {
-      const rows = await prisma.calculation.findMany({
-        where: { organizationId: tenantId },
-        orderBy: { createdAt: "desc" },
-        take: 100,
-      });
-      return rows.map(calculationView);
-    },
-    async getCalculation(tenantId, calculationId) {
-      const row = await prisma.calculation.findFirst({
-        where: { id: calculationId, organizationId: tenantId },
-      });
-      return row ? calculationView(row) : null;
-    },
     async company(tenantId) {
-      return prisma.organization.findUnique({
+      const company = await prisma.organization.findUnique({
         where: { id: tenantId },
         select: {
           id: true,
@@ -75,6 +33,16 @@ export function createPrismaTenantQueries(prisma: PrismaClient): TenantQueries {
           },
         },
       });
+      if (!company) return null;
+      return {
+        ...company,
+        createdAt: company.createdAt.toISOString(),
+        members: company.members.map((member) => ({
+          ...member,
+          role: requiredRole(member.role),
+          createdAt: member.createdAt.toISOString(),
+        })),
+      };
     },
     async userContext(userId) {
       const user = await prisma.user.findUniqueOrThrow({
@@ -84,6 +52,7 @@ export function createPrismaTenantQueries(prisma: PrismaClient): TenantQueries {
           name: true,
           email: true,
           platformRole: true,
+          profile: { select: { userId: true } },
           membership: {
             select: {
               role: true,
@@ -94,7 +63,27 @@ export function createPrismaTenantQueries(prisma: PrismaClient): TenantQueries {
           },
         },
       });
-      return { ...user, onboardingRequired: user.membership === null };
+      if (!user.membership) {
+        return {
+          ...user,
+          profile: undefined,
+          membership: null,
+          onboardingRequired: true,
+          profileRequired: false,
+        };
+      }
+      const role = requiredRole(user.membership.role);
+      return {
+        ...user,
+        profile: undefined,
+        onboardingRequired: false,
+        profileRequired: !user.profile,
+        membership: {
+          ...user.membership,
+          role,
+          permissions: organizationPermissions(role),
+        },
+      };
     },
   };
 }

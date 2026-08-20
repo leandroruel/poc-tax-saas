@@ -2,6 +2,11 @@ import { betterAuth } from "better-auth";
 import { APIError } from "better-auth/api";
 import { prismaAdapter } from "better-auth/adapters/prisma";
 import { organization } from "better-auth/plugins";
+import {
+  adminAc,
+  memberAc,
+  ownerAc,
+} from "better-auth/plugins/organization/access";
 import { v7 as uuidv7 } from "uuid";
 import { parseCnpj } from "../../domain/identity/cnpj.js";
 import { prisma } from "../prisma/prisma-client.js";
@@ -14,9 +19,10 @@ function insecureDevelopmentSecretsAllowed(): boolean {
 
 async function writeAuthAudit(input: {
   action: string;
-  entityType: "User" | "Session" | "Account";
+  entityType: string;
   entityId: string;
   actorUserId?: string;
+  organizationId?: string;
   metadata?: Record<string, string>;
 }): Promise<void> {
   try {
@@ -27,6 +33,7 @@ async function writeAuthAudit(input: {
         entityType: input.entityType,
         entityId: input.entityId,
         actorUserId: input.actorUserId,
+        organizationId: input.organizationId,
         metadata: input.metadata,
       },
     });
@@ -176,6 +183,15 @@ export const auth = betterAuth({
   plugins: [
     organization({
       organizationLimit: 1,
+      roles: {
+        owner: ownerAc,
+        admin: adminAc,
+        operator: memberAc,
+        reviewer: memberAc,
+      },
+      // Local MVP: invitation IDs are opaque bearer links. Enable verified
+      // email before any public deployment and connect an email provider.
+      requireEmailVerificationOnInvitation: false,
       schema: {
         organization: {
           additionalFields: {
@@ -217,6 +233,36 @@ export const auth = betterAuth({
           rejectExistingMembership(member.userId),
         beforeAcceptInvitation: async ({ user }) =>
           rejectExistingMembership(user.id),
+        afterCreateInvitation: async ({ invitation, inviter, organization }) =>
+          writeAuthAudit({
+            action: "organization.invitation_created",
+            entityType: "Invitation",
+            entityId: invitation.id,
+            actorUserId: inviter.id,
+            organizationId: organization.id,
+            metadata: { role: invitation.role },
+          }),
+        afterAcceptInvitation: async ({ invitation, user, organization }) =>
+          writeAuthAudit({
+            action: "organization.invitation_accepted",
+            entityType: "Invitation",
+            entityId: invitation.id,
+            actorUserId: user.id,
+            organizationId: organization.id,
+            metadata: { role: invitation.role },
+          }),
+        afterCancelInvitation: async ({
+          invitation,
+          cancelledBy,
+          organization,
+        }) =>
+          writeAuthAudit({
+            action: "organization.invitation_cancelled",
+            entityType: "Invitation",
+            entityId: invitation.id,
+            actorUserId: cancelledBy.id,
+            organizationId: organization.id,
+          }),
       },
     }),
   ],

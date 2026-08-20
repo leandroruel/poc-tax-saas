@@ -1,6 +1,6 @@
 import type { TenantSegment } from "../../domain/tenancy/tenant-context.js";
+import type { OrganizationRole } from "../../domain/tenancy/organization-access.js";
 
-export type OrganizationRole = "owner" | "admin" | "member";
 export type RequestHeaders = Readonly<
   Record<string, string | string[] | undefined>
 >;

@@ -8,15 +8,19 @@
     "clean": "node --eval \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "build": "pnpm clean && tsc -p tsconfig.json",
     "start": "node dist/interfaces/http/server.js",
+    "worker": "node dist/interfaces/worker/main.js",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "seed": "tsx prisma/seed/index.ts",
     "test": "TAXMAN_ALLOW_INSECURE_DEV_SECRETS=true vitest run"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "3.1115.0",
     "@fastify/cors": "^10.0.0",
+    "@fastify/multipart": "10.1.0",
     "@prisma/client": "^6.1.0",
     "better-auth": "1.7.1",
+    "bullmq": "5.81.3",
     "fastify": "^5.2.0",
     "uuid": "14.0.2",
     "zod": "^4.4.3"

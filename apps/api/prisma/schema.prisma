@@ -25,6 +25,60 @@ enum RuleEditorialStatus {
   revoked
 }
 
+enum ImportBatchStatus {
+  draft
+  validating
+  ready
+  processing
+  requires_review
+  closed
+  failed
+  cancelled
+}
+
+enum BackgroundJobStatus {
+  queued
+  active
+  retrying
+  completed
+  failed
+  cancelled
+}
+
+enum JobAttemptStatus {
+  active
+  completed
+  failed
+}
+
+enum ImportBatchRowStatus {
+  valid
+  invalid
+  processed
+  failed
+}
+
+enum NotificationType {
+  batch_completed
+  batch_requires_review
+  job_failed
+  job_recovered
+  export_ready
+  rule_scheduled
+  rule_activated
+}
+
+enum ExportArtifactStatus {
+  queued
+  ready
+  failed
+}
+
+enum ExportArtifactFormat {
+  csv
+  evidence_json
+}
+
 model User {
   id            String       @id
   name          String
@@ -38,12 +92,17 @@ model User {
   sessions        Session[]
   accounts        Account[]
   membership      Member?
-  invitationsSent Invitation[]     @relation("InvitationInviter")
+  invitationsSent Invitation[]           @relation("InvitationInviter")
   profile         UserProfile?
   calculations    Calculation[]
-  rulesCreated    TaxRuleVersion[] @relation("RuleCreatedBy")
-  rulesReviewed   TaxRuleVersion[] @relation("RuleReviewedBy")
-  auditEvents     AuditLog[]       @relation("AuditActor")
+  rulesCreated    TaxRuleVersion[]       @relation("RuleCreatedBy")
+  rulesReviewed   TaxRuleVersion[]       @relation("RuleReviewedBy")
+  auditEvents     AuditLog[]             @relation("AuditActor")
+  importBatches   ImportBatch[]
+  importMappings  ImportMappingProfile[]
+  backgroundJobs  BackgroundJob[]
+  notifications   Notification[]
+  exports         ExportArtifact[]
 }
 
 model Session {
@@ -104,10 +163,15 @@ model Organization {
   segment   TenantSegment
   createdAt DateTime      @default(now())
 
-  members      Member[]
-  invitations  Invitation[]
-  calculations Calculation[]
-  auditEvents  AuditLog[]
+  members        Member[]
+  invitations    Invitation[]
+  calculations   Calculation[]
+  auditEvents    AuditLog[]
+  importBatches  ImportBatch[]
+  importMappings ImportMappingProfile[]
+  backgroundJobs BackgroundJob[]
+  notifications  Notification[]
+  exports        ExportArtifact[]
 }
 
 model Member {
@@ -202,10 +266,12 @@ model Calculation {
   ruleVersion    TaxRuleVersion? @relation(fields: [ruleVersionId], references: [id], onDelete: Restrict)
   recalculates   Calculation?    @relation("CalculationRevision", fields: [recalculatesId], references: [id], onDelete: Restrict)
   recalculations Calculation[]   @relation("CalculationRevision")
+  importRow      ImportBatchRow?
 
-  @@index([organizationId, createdAt])
+  @@index([organizationId, createdAt(sort: Desc), id(sort: Desc)])
   @@index([createdById])
   @@index([ruleVersionId])
+  @@index([recalculatesId])
 }
 
 model AuditLog {
@@ -225,4 +291,168 @@ model AuditLog {
   @@index([entityType, entityId, occurredAt])
   @@index([organizationId, occurredAt])
   @@index([actorUserId, occurredAt])
+}
+
+model ImportBatch {
+  id               String                @id
+  organizationId   String                @db.Uuid
+  createdById      String
+  status           ImportBatchStatus     @default(draft)
+  sourceKind       String                @default("manual_upload")
+  originalFileName String?
+  objectKey        String?
+  contentHash      String?
+  operationType    String?
+  delimiter        String?
+  detectedHeaders  Json?
+  mapping          Json?
+  mappingProfileId String?
+  totalRows        Int                   @default(0)
+  validRows        Int                   @default(0)
+  invalidRows      Int                   @default(0)
+  processedRows    Int                   @default(0)
+  failedRows       Int                   @default(0)
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
+  closedAt         DateTime?
+  organization     Organization          @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  createdBy        User                  @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  mappingProfile   ImportMappingProfile? @relation(fields: [mappingProfileId], references: [id], onDelete: SetNull)
+  jobs             BackgroundJob[]
+  rows             ImportBatchRow[]
+
+  @@index([organizationId, createdAt(sort: Desc), id(sort: Desc)])
+  @@index([createdById])
+  @@index([mappingProfileId])
+  @@index([status, updatedAt])
+}
+
+model ImportMappingProfile {
+  id             String        @id
+  organizationId String        @db.Uuid
+  createdById    String
+  name           String
+  operationType  String
+  mapping        Json
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  createdBy      User          @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  batches        ImportBatch[]
+
+  @@unique([organizationId, name])
+  @@index([createdById])
+  @@index([organizationId, operationType, updatedAt(sort: Desc)])
+}
+
+model ImportBatchRow {
+  id               String               @id
+  batchId          String
+  rowNumber        Int
+  status           ImportBatchRowStatus
+  rawData          Json
+  normalizedInput  Json?
+  validationErrors Json?
+  calculationId    String?              @unique
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+  batch            ImportBatch          @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  calculation      Calculation?         @relation(fields: [calculationId], references: [id], onDelete: Restrict)
+
+  @@unique([batchId, rowNumber])
+  @@index([batchId, status, rowNumber])
+}
+
+model BackgroundJob {
+  id               String              @id
+  organizationId   String              @db.Uuid
+  createdById      String
+  batchId          String?
+  exportId         String?
+  type             String
+  status           BackgroundJobStatus @default(queued)
+  payload          Json
+  progressCurrent  Int                 @default(0)
+  progressTotal    Int                 @default(0)
+  attemptsMade     Int                 @default(0)
+  maxAttempts      Int                 @default(3)
+  dispatchVersion  Int                 @default(0)
+  correlationId    String              @unique
+  lastErrorCode    String?
+  lastErrorMessage String?
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+  startedAt        DateTime?
+  finishedAt       DateTime?
+  organization     Organization        @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  createdBy        User                @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  batch            ImportBatch?        @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  export           ExportArtifact?     @relation(fields: [exportId], references: [id], onDelete: Restrict)
+  attempts         JobAttempt[]
+
+  @@index([organizationId, createdAt(sort: Desc), id(sort: Desc)])
+  @@index([createdById])
+  @@index([batchId])
+  @@index([exportId])
+  @@index([status, updatedAt])
+}
+
+model ExportArtifact {
+  id             String               @id
+  organizationId String               @db.Uuid
+  createdById    String
+  status         ExportArtifactStatus @default(queued)
+  format         ExportArtifactFormat
+  columns        Json
+  filters        Json
+  objectKey      String?              @unique
+  fileName       String?
+  contentType    String?
+  rowCount       Int                  @default(0)
+  errorMessage   String?
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
+  readyAt        DateTime?
+  organization   Organization         @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  createdBy      User                 @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  jobs           BackgroundJob[]
+
+  @@index([organizationId, createdAt(sort: Desc), id(sort: Desc)])
+  @@index([createdById])
+  @@index([status, updatedAt])
+}
+
+model JobAttempt {
+  id            String           @id
+  jobId         String
+  number        Int
+  status        JobAttemptStatus
+  correlationId String
+  errorCode     String?
+  errorMessage  String?
+  startedAt     DateTime         @default(now())
+  finishedAt    DateTime?
+  job           BackgroundJob    @relation(fields: [jobId], references: [id], onDelete: Restrict)
+
+  @@unique([jobId, number])
+  @@index([jobId, startedAt])
+}
+
+model Notification {
+  id             String           @id
+  organizationId String           @db.Uuid
+  userId         String
+  type           NotificationType
+  title          String
+  message        String
+  entityType     String
+  entityId       String
+  createdAt      DateTime         @default(now())
+  readAt         DateTime?
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  user           User             @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([organizationId, createdAt(sort: Desc)])
+  @@index([userId, readAt, createdAt(sort: Desc)])
+  @@index([entityType, entityId])
 }

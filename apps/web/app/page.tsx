@@ -3,6 +3,7 @@
 import * as React from "react";
 import {
   Building2,
+  Bell,
   Calculator,
   ChevronRight,
   FileClock,
@@ -12,6 +13,8 @@ import {
   Scale,
   Settings2,
   ShieldCheck,
+  UploadCloud,
+  RotateCcw,
   Users,
   X,
   type LucideIcon,
@@ -20,36 +23,47 @@ import { authClient } from "@/lib/auth-client";
 import { Button } from "@/components/ui/button";
 import { Input, Select } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  CalculationExports,
+  type CalculationExportFilters,
+} from "@/components/calculation-exports";
+import type {
+  CalculationPage,
+  CalculationRecord,
+  CalculationStatus,
+  Company as CompanyDto,
+  DashboardOverview,
+  BackgroundJob,
+  BackgroundJobDetail,
+  ImportBatch,
+  ImportBatchDetail,
+  ImportMappingProfile,
+  ImportBatchReviewPage,
+  ImportBatchReviewRow,
+  Me,
+  NotificationFeed,
+  AuditCategory,
+  AuditEventPage,
+  OrganizationRole,
+} from "@/lib/api-types";
 
 type Section =
   | "overview"
   | "calculate"
   | "history"
+  | "imports"
   | "company"
+  | "activity"
   | "rules"
   | "audit";
-type Me = {
-  id: string;
-  name: string;
-  email: string;
-  platformRole: "user" | "super_admin";
-  onboardingRequired: boolean;
-  membership: null | {
-    role: string;
-    organization: {
-      id: string;
-      name: string;
-      slug: string;
-      segment: "credit_provider" | "insurance_pension";
-    };
-  };
-};
-
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
+  const isForm = init?.body instanceof FormData;
   const response = await fetch(path, {
     ...init,
     credentials: "include",
-    headers: { "content-type": "application/json", ...init?.headers },
+    headers: isForm
+      ? init?.headers
+      : { "content-type": "application/json", ...init?.headers },
   });
   const text = response.status === 204 ? "" : await response.text();
   let payload: unknown = null;
@@ -112,8 +126,8 @@ function useApiQuery<T>(path: string) {
   return { data, error, loading, reload };
 }
 
-function AuthScreen() {
-  const [creating, setCreating] = React.useState(false);
+function AuthScreen({ invitationId }: { invitationId: string | null }) {
+  const [creating, setCreating] = React.useState(Boolean(invitationId));
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState("");
 
@@ -137,7 +151,19 @@ function AuthScreen() {
         setError(result.error.message ?? "Credenciais inválidas.");
         return;
       }
-      window.location.reload();
+      if (invitationId) {
+        const accepted = await authClient.organization.acceptInvitation({
+          invitationId,
+        });
+        if (accepted.error) {
+          setError(
+            accepted.error.message ??
+              "Não foi possível aceitar o convite com esta conta.",
+          );
+          return;
+        }
+      }
+      window.location.href = invitationId ? "/" : window.location.href;
     } catch {
       setError("Serviço de autenticação indisponível. Tente novamente.");
     } finally {
@@ -171,12 +197,24 @@ function AuthScreen() {
         <form className="auth-form" onSubmit={submit}>
           <div>
             <span className="step-caption">
-              {creating ? "Etapa 1 de 4" : "Acesso seguro"}
+              {invitationId
+                ? "Convite empresarial"
+                : creating
+                  ? "Etapa 1 de 4"
+                  : "Acesso seguro"}
             </span>
-            <h2>{creating ? "Crie sua conta" : "Bem-vindo de volta"}</h2>
+            <h2>
+              {invitationId
+                ? "Entre para aceitar o convite"
+                : creating
+                  ? "Crie sua conta"
+                  : "Bem-vindo de volta"}
+            </h2>
             <p>
               {creating
-                ? "Depois, cadastraremos sua empresa."
+                ? invitationId
+                  ? "Use o e-mail que recebeu o convite. Depois, concluiremos seus dados cadastrais."
+                  : "Depois, cadastraremos sua empresa."
                 : "Entre para acessar o workspace da sua empresa."}
             </p>
           </div>
@@ -212,6 +250,84 @@ function AuthScreen() {
             {creating ? "Já tenho uma conta" : "Criar conta empresarial"}
           </button>
         </form>
+      </section>
+    </main>
+  );
+}
+
+function InvitationAcceptance({ invitationId }: { invitationId: string }) {
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState("");
+  async function accept() {
+    setBusy(true);
+    setError("");
+    try {
+      const result = await authClient.organization.acceptInvitation({
+        invitationId,
+      });
+      if (result.error) {
+        setError(
+          result.error.message ?? "Não foi possível aceitar este convite.",
+        );
+        setBusy(false);
+        return;
+      }
+      window.location.href = "/";
+    } catch {
+      setError(
+        "Serviço de autenticação indisponível. Tente novamente.",
+      );
+      setBusy(false);
+    }
+  }
+  return (
+    <main className="onboarding-shell">
+      <div className="brand dark"><span className="brand-mark"><Scale size={22} /></span> TaxMan</div>
+      <section className="onboarding-card invitation-acceptance">
+        <span className="eyebrow">Convite empresarial</span>
+        <h1>Você foi convidado para um workspace</h1>
+        <p>O aceite vincula sua conta a esta empresa. Cada usuário pode pertencer a somente uma organização.</p>
+        {error && <p className="form-error">{error}</p>}
+        <Button disabled={busy} onClick={() => void accept()}>
+          {busy ? "Aceitando..." : "Aceitar convite"}
+        </Button>
+      </section>
+    </main>
+  );
+}
+
+function ProfileCompletion({ me }: { me: Me }) {
+  const [cpf, setCpf] = React.useState("");
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState("");
+  async function finish() {
+    setBusy(true);
+    setError("");
+    try {
+      await api("/api/profile", {
+        method: "POST",
+        body: JSON.stringify({ cpf }),
+      });
+      window.location.href = "/";
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Falha ao salvar o perfil.");
+      setBusy(false);
+    }
+  }
+  return (
+    <main className="onboarding-shell">
+      <div className="brand dark"><span className="brand-mark"><Scale size={22} /></span> TaxMan</div>
+      <section className="onboarding-card invitation-acceptance">
+        <span className="eyebrow">Última etapa</span>
+        <h1>Complete seus dados cadastrais</h1>
+        <p>Olá, {me.name}. Seu CPF será criptografado e não será devolvido pela API.</p>
+        <Field label="CPF">
+          <Input value={cpf} onChange={(event) => setCpf(event.target.value)} placeholder="000.000.000-00" autoFocus />
+        </Field>
+        {error && <p className="form-error">{error}</p>}
+        <Button disabled={busy || !cpf} onClick={() => void finish()}>
+          {busy ? "Protegendo seus dados..." : "Concluir e acessar"}
+        </Button>
       </section>
     </main>
   );
@@ -420,8 +536,91 @@ function Panel({
   );
 }
 
-function Overview({ setSection }: { setSection: (section: Section) => void }) {
-  const { data, error, loading } = useApiQuery<any>("/api/dashboard");
+function NotificationBell() {
+  const [open, setOpen] = React.useState(false);
+  const { data, error, reload } =
+    useApiQuery<NotificationFeed>("/api/notifications?limit=20");
+
+  React.useEffect(() => {
+    const timer = window.setInterval(() => void reload(), 15_000);
+    return () => window.clearInterval(timer);
+  }, [reload]);
+
+  async function markRead(notificationId: string) {
+    await api(`/api/notifications/${notificationId}/read`, { method: "POST" });
+    await reload();
+  }
+
+  return (
+    <div className="notification-center">
+      <button
+        className="notification-trigger"
+        type="button"
+        aria-label="Notificações"
+        aria-expanded={open}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <Bell size={19} />
+        {!!data?.unreadCount && (
+          <span className="notification-count">
+            {Math.min(data.unreadCount, 99)}
+          </span>
+        )}
+      </button>
+      {open && (
+        <section className="notification-popover" aria-label="Notificações">
+          <header>
+            <div>
+              <strong>Notificações</strong>
+              <small>
+                {data?.unreadCount
+                  ? `${data.unreadCount} não lida${data.unreadCount === 1 ? "" : "s"}`
+                  : "Tudo em dia"}
+              </small>
+            </div>
+          </header>
+          {error ? (
+            <p className="notification-empty">{error}</p>
+          ) : data?.items.length ? (
+            <div className="notification-list">
+              {data.items.map((notification) => (
+                <button
+                  type="button"
+                  key={notification.id}
+                  className={notification.readAt ? "read" : "unread"}
+                  onClick={() => void markRead(notification.id)}
+                >
+                  <span className="notification-dot" />
+                  <span>
+                    <strong>{notification.title}</strong>
+                    <small>{notification.message}</small>
+                    <time>
+                      {new Date(notification.createdAt).toLocaleString("pt-BR")}
+                    </time>
+                  </span>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <p className="notification-empty">
+              Conclusões, falhas e revisões de lotes aparecerão aqui.
+            </p>
+          )}
+        </section>
+      )}
+    </div>
+  );
+}
+
+function Overview({
+  setSection,
+  canCreateCalculation,
+}: {
+  setSection: (section: Section) => void;
+  canCreateCalculation: boolean;
+}) {
+  const { data, error, loading } =
+    useApiQuery<DashboardOverview>("/api/dashboard");
   return (
     <>
       <div className="page-heading">
@@ -430,9 +629,11 @@ function Overview({ setSection }: { setSection: (section: Section) => void }) {
           <h1>Operação tributária</h1>
           <p>Acompanhe os cálculos e a cobertura do seu workspace.</p>
         </div>
-        <Button onClick={() => setSection("calculate")}>
-          <Calculator size={16} /> Novo cálculo
-        </Button>
+        {canCreateCalculation && (
+          <Button onClick={() => setSection("calculate")}>
+            <Calculator size={16} /> Novo cálculo
+          </Button>
+        )}
       </div>
       <div className="metric-grid">
         <div className="metric">
@@ -441,16 +642,35 @@ function Overview({ setSection }: { setSection: (section: Section) => void }) {
           <small>Histórico imutável</small>
         </div>
         <div className="metric">
-          <span>Tributo disponível</span>
-          <strong>IOF</strong>
-          <small>Crédito PJ e VGBL</small>
+          <span>IOF apurado · 30 dias</span>
+          <strong>
+            {data ? moneyDecimal(data.calculatedTaxAmount30Days) : "—"}
+          </strong>
+          <small>Somente resultados calculados</small>
+        </div>
+        <div className={`metric ${data?.attentionRequired ? "attention" : ""}`}>
+          <span>Requer atenção</span>
+          <strong>{data?.attentionRequired ?? "—"}</strong>
+          <small>Sem regra, contexto ou suporte</small>
         </div>
         <div className="metric">
-          <span>Catálogo</span>
-          <strong>{data ? `${data.ruleVersionCount} versões` : "—"}</strong>
-          <small>Vigência 2025 → atual</small>
+          <span>Regras aprovadas</span>
+          <strong>{data?.ruleVersionCount ?? "—"}</strong>
+          <small>Versões no catálogo global</small>
         </div>
       </div>
+      <Panel
+        title="Volume e IOF processado"
+        subtitle="Atividade registrada nos últimos 14 dias; use o histórico para investigar cada valor."
+      >
+        {error ? (
+          <Empty text={error} />
+        ) : loading || !data ? (
+          <Empty text="Carregando indicadores..." />
+        ) : (
+          <ActivityChart activity={data.activity} />
+        )}
+      </Panel>
       <Panel
         title="Atividade recente"
         subtitle="Últimos cálculos realizados neste workspace."
@@ -469,6 +689,75 @@ function Overview({ setSection }: { setSection: (section: Section) => void }) {
   );
 }
 
+function ActivityChart({
+  activity,
+}: {
+  activity: DashboardOverview["activity"];
+}) {
+  const hasActivity = activity.some(({ calculations }) => calculations > 0);
+  if (!hasActivity) {
+    return <Empty text="Ainda não há atividade suficiente para exibir a evolução." />;
+  }
+  const amounts = activity.map(({ taxAmount }) => Number(taxAmount));
+  const maxAmount = Math.max(...amounts);
+  const maxCalculations = Math.max(
+    ...activity.map(({ calculations }) => calculations),
+  );
+  const usesAmount = maxAmount > 0;
+  return (
+    <div className="activity-chart-wrap">
+      <div className="activity-chart-summary">
+        <span>
+          <i className="chart-key tax" /> IOF apurado
+        </span>
+        <span>
+          <i className="chart-key volume" /> Cálculos no dia
+        </span>
+      </div>
+      <div
+        className="activity-chart"
+        role="img"
+        aria-label="IOF apurado e quantidade de cálculos por dia nos últimos 14 dias"
+      >
+        {activity.map((point, index) => {
+          const amount = amounts[index];
+          const scale = usesAmount
+            ? amount / maxAmount
+            : point.calculations / maxCalculations;
+          return (
+            <div
+              className="activity-day"
+              key={point.date}
+              title={`${new Date(`${point.date}T12:00:00`).toLocaleDateString("pt-BR")}: ${point.calculations} cálculo(s), ${moneyDecimal(point.taxAmount)} de IOF`}
+            >
+              <div className="activity-bar-track">
+                <span
+                  className="activity-bar"
+                  style={{ transform: `scaleY(${Math.max(scale, 0.025)})` }}
+                />
+                <span
+                  className="activity-volume-bar"
+                  style={{
+                    transform: `scaleY(${Math.max(point.calculations / maxCalculations, 0.025)})`,
+                  }}
+                />
+              </div>
+              <small>
+                {index === 0 || index === activity.length - 1 || index === 6
+                  ? new Date(`${point.date}T12:00:00`).toLocaleDateString(
+                      "pt-BR",
+                      { day: "2-digit", month: "2-digit" },
+                    )
+                  : ""}
+              </small>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function Empty({ text }: { text: string }) {
   return (
     <div className="empty-state">
@@ -483,7 +772,51 @@ function money(value: number) {
     currency: "BRL",
   }).format(value);
 }
-function CalculationRows({ rows }: { rows: any[] }) {
+
+function moneyDecimal(value: string): string {
+  const [whole, fraction = "00"] = value.split(".");
+  return `R$ ${BigInt(whole).toLocaleString("pt-BR")},${fraction.padEnd(2, "0")}`;
+}
+
+function organizationRoleLabel(role: OrganizationRole): string {
+  const labels: Record<OrganizationRole, string> = {
+    owner: "Proprietário",
+    admin: "Administrador",
+    operator: "Operador",
+    reviewer: "Revisor",
+  };
+  return labels[role];
+}
+
+function operationForRequest(input: CalculationRecord["input"]) {
+  if (input.kind === "credit") {
+    return { ...input, amount: Number(input.amount) };
+  }
+  return {
+    ...input,
+    amount: Number(input.amount),
+    priorContributions: {
+      sameInsurer:
+        input.priorContributions.sameInsurer === undefined
+          ? undefined
+          : Number(input.priorContributions.sameInsurer),
+      allInsurers:
+        input.priorContributions.allInsurers === undefined
+          ? undefined
+          : Number(input.priorContributions.allInsurers),
+    },
+  };
+}
+
+function CalculationRows({
+  rows,
+  onSelect,
+  selectedId,
+}: {
+  rows: readonly CalculationRecord[];
+  onSelect?: (calculationId: string) => void;
+  selectedId?: string;
+}) {
   return (
     <div className="table-wrap">
       <table>
@@ -493,6 +826,7 @@ function CalculationRows({ rows }: { rows: any[] }) {
             <th>Data</th>
             <th>Status</th>
             <th>IOF</th>
+            {onSelect && <th><span className="sr-only">Ações</span></th>}
           </tr>
         </thead>
         <tbody>
@@ -513,19 +847,140 @@ function CalculationRows({ rows }: { rows: any[] }) {
               </td>
               <td>
                 <span className={`badge ${row.outcome.kind}`}>
-                  {row.outcome.kind}
+                  {calculationStatusLabels[row.outcome.kind]}
                 </span>
               </td>
               <td>
-                {row.outcome.result
+                {row.outcome.kind === "calculated"
                   ? money(Number(row.outcome.result.amount))
                   : "—"}
               </td>
+              {onSelect && (
+                <td>
+                  <button
+                    type="button"
+                    className="calculation-detail-trigger"
+                    aria-pressed={selectedId === row.id}
+                    onClick={() => onSelect(row.id)}
+                  >
+                    {selectedId === row.id ? "Ocultar" : "Ver memória"}
+                  </button>
+                </td>
+              )}
             </tr>
           ))}
         </tbody>
       </table>
     </div>
+  );
+}
+
+function CalculationDetail({
+  calculation,
+  canRecalculate,
+  busy,
+  onRecalculate,
+}: {
+  calculation: CalculationRecord;
+  canRecalculate: boolean;
+  busy: boolean;
+  onRecalculate: () => void;
+}) {
+  const input = calculation.input;
+  const result =
+    calculation.outcome.kind === "calculated"
+      ? calculation.outcome.result
+      : null;
+  return (
+    <section className="calculation-detail" aria-labelledby="calculation-detail-title">
+      <header>
+        <div>
+          <span className="eyebrow">Memória imutável</span>
+          <h3 id="calculation-detail-title">Cálculo {calculation.id}</h3>
+          <p>
+            Registrado por {calculation.createdBy.name} em {new Date(calculation.createdAt).toLocaleString("pt-BR")}.
+          </p>
+        </div>
+        <span className={`badge ${calculation.outcome.kind}`}>
+          {calculationStatusLabels[calculation.outcome.kind]}
+        </span>
+      </header>
+      <div className="calculation-detail-grid">
+        <div>
+          <span>Operação</span>
+          <strong>{input.kind === "credit" ? "Crédito PJ" : "VGBL"}</strong>
+        </div>
+        <div>
+          <span>Data da operação</span>
+          <strong>{new Date(`${input.occurredOn}T12:00:00`).toLocaleDateString("pt-BR")}</strong>
+        </div>
+        <div>
+          <span>Valor informado</span>
+          <strong>{money(Number(input.amount))}</strong>
+        </div>
+        {input.kind === "credit" ? (
+          <div>
+            <span>Prazo</span>
+            <strong>{input.termInDays} dias</strong>
+          </div>
+        ) : (
+          <>
+            <div>
+              <span>Pagador</span>
+              <strong>{input.payer === "employer" ? "Empregador" : "Titular"}</strong>
+            </div>
+            <div>
+              <span>Aportes · mesma seguradora</span>
+              <strong>{money(Number(input.priorContributions.sameInsurer ?? 0))}</strong>
+            </div>
+            <div>
+              <span>Aportes · todas</span>
+              <strong>{money(Number(input.priorContributions.allInsurers ?? 0))}</strong>
+            </div>
+          </>
+        )}
+      </div>
+      {result && (
+        <div className="calculation-result-detail">
+          <div><span>IOF apurado</span><strong>{money(Number(result.amount))}</strong></div>
+          <div><span>Base tributável</span><strong>{money(Number(result.taxableBase))}</strong></div>
+          <div><span>Base bruta</span><strong>{money(Number(result.grossBase))}</strong></div>
+          <div><span>Versão aplicada</span><strong>v{result.ruleVersion}</strong></div>
+        </div>
+      )}
+      {calculation.ruleSnapshot && (
+        <div className="rule-evidence">
+          <div>
+            <strong>Regra preservada no cálculo</strong>
+            <small>
+              Vigência {calculation.ruleSnapshot.effectiveFrom} → {calculation.ruleSnapshot.effectiveTo ?? "aberta"}
+            </small>
+          </div>
+          <p>{calculation.ruleSnapshot.legalBasis}</p>
+          {calculation.ruleSnapshot.sourceUrl && (
+            <a href={calculation.ruleSnapshot.sourceUrl} target="_blank" rel="noreferrer">
+              Consultar fonte oficial
+            </a>
+          )}
+          {!!result?.evidence.length && (
+            <ul>{result.evidence.map((item) => <li key={item}>{item}</li>)}</ul>
+          )}
+        </div>
+      )}
+      {calculation.recalculatesId && (
+        <p className="calculation-lineage">
+          Este registro recalcula <code>{calculation.recalculatesId}</code> sem substituir o original.
+        </p>
+      )}
+      {canRecalculate && (
+        <div className="calculation-detail-actions">
+          <Button type="button" variant="outline" disabled={busy} onClick={onRecalculate}>
+            <RotateCcw size={15} /> {busy ? "Recalculando..." : "Recalcular e vincular"}
+          </Button>
+          <small>Cria um novo registro usando a regra aprovada para a data original.</small>
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -702,9 +1157,137 @@ function Calculate({
   );
 }
 
-function History() {
-  const { data: rows, error, loading } =
-    useApiQuery<any[]>("/api/calculations");
+const calculationStatusLabels: Record<CalculationStatus, string> = {
+  calculated: "Calculado",
+  unsupported: "Não suportado",
+  not_applicable: "Não aplicável",
+  requires_context: "Requer dados",
+  no_rule: "Sem regra",
+  ambiguous_rule: "Regra ambígua",
+};
+
+function History({
+  canExport,
+  canRecalculate,
+}: {
+  canExport: boolean;
+  canRecalculate: boolean;
+}) {
+  const [path, setPath] = React.useState("/api/calculations?limit=25");
+  const { data, error, loading, reload } = useApiQuery<CalculationPage>(path);
+  const [rows, setRows] = React.useState<CalculationRecord[]>([]);
+  const [nextCursor, setNextCursor] = React.useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = React.useState(false);
+  const [pageError, setPageError] = React.useState("");
+  const [activeFilters, setActiveFilters] =
+    React.useState<CalculationExportFilters>({});
+  const [selectedCalculation, setSelectedCalculation] =
+    React.useState<CalculationRecord | null>(null);
+  const [detailLoading, setDetailLoading] = React.useState(false);
+  const [recalculating, setRecalculating] = React.useState(false);
+
+  React.useEffect(() => {
+    if (!data) return;
+    setRows(data.items);
+    setNextCursor(data.nextCursor);
+  }, [data]);
+
+  function applyFilters(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const params = new URLSearchParams({ limit: "25" });
+    const calculationId = String(form.get("calculationId") ?? "").trim();
+    const operationType = String(form.get("operationType") ?? "").trim();
+    const status = String(form.get("status") ?? "").trim();
+    const occurredFrom = String(form.get("occurredFrom") ?? "").trim();
+    const occurredTo = String(form.get("occurredTo") ?? "").trim();
+    const nextFilters: CalculationExportFilters = {
+      ...(calculationId ? { calculationId } : {}),
+      ...(operationType
+        ? { operationType: operationType as CalculationExportFilters["operationType"] }
+        : {}),
+      ...(status ? { status: status as CalculationExportFilters["status"] } : {}),
+      ...(occurredFrom ? { occurredFrom } : {}),
+      ...(occurredTo ? { occurredTo } : {}),
+    };
+    for (const [key, value] of Object.entries(nextFilters)) params.set(key, value);
+    setRows([]);
+    setNextCursor(null);
+    setPageError("");
+    setActiveFilters(nextFilters);
+    setPath(`/api/calculations?${params.toString()}`);
+  }
+
+  async function loadMore() {
+    if (!nextCursor) return;
+    setLoadingMore(true);
+    setPageError("");
+    try {
+      const separator = path.includes("?") ? "&" : "?";
+      const page = await api<CalculationPage>(
+        `${path}${separator}cursor=${encodeURIComponent(nextCursor)}`,
+      );
+      setRows((current) => [...current, ...page.items]);
+      setNextCursor(page.nextCursor);
+    } catch (reason) {
+      setPageError(
+        reason instanceof Error
+          ? reason.message
+          : "Não foi possível carregar mais cálculos.",
+      );
+    } finally {
+      setLoadingMore(false);
+    }
+  }
+
+  async function inspectCalculation(calculationId: string) {
+    if (selectedCalculation?.id === calculationId) {
+      setSelectedCalculation(null);
+      return;
+    }
+    setDetailLoading(true);
+    setPageError("");
+    try {
+      setSelectedCalculation(
+        await api<CalculationRecord>(`/api/calculations/${calculationId}`),
+      );
+    } catch (reason) {
+      setPageError(
+        reason instanceof Error
+          ? reason.message
+          : "Não foi possível carregar a memória do cálculo.",
+      );
+    } finally {
+      setDetailLoading(false);
+    }
+  }
+
+  async function recalculateSelected() {
+    if (!selectedCalculation) return;
+    setRecalculating(true);
+    setPageError("");
+    try {
+      const created = await api<{ calculationId: string }>("/tax/calculate", {
+        method: "POST",
+        body: JSON.stringify({
+          operation: operationForRequest(selectedCalculation.input),
+          recalculatesId: selectedCalculation.id,
+        }),
+      });
+      const next = await api<CalculationRecord>(
+        `/api/calculations/${created.calculationId}`,
+      );
+      setSelectedCalculation(next);
+      await reload();
+    } catch (reason) {
+      setPageError(
+        reason instanceof Error ? reason.message : "Falha ao recalcular a operação.",
+      );
+    } finally {
+      setRecalculating(false);
+    }
+  }
+
   return (
     <>
       <div className="page-heading">
@@ -717,24 +1300,822 @@ function History() {
           </p>
         </div>
       </div>
-      <Panel title="Cálculos" subtitle="Até 100 registros mais recentes.">
-        {error ? (
-          <Empty text={error} />
-        ) : loading || rows === null ? (
+      <Panel
+        title="Cálculos"
+        subtitle="Livro imutável, filtrado e ordenado do registro mais recente para o mais antigo."
+      >
+        <form className="ledger-filters" onSubmit={applyFilters}>
+          <Field label="ID do cálculo">
+            <Input name="calculationId" placeholder="UUID do registro" />
+          </Field>
+          <Field label="Modalidade">
+            <Select name="operationType" defaultValue="">
+              <option value="">Todas</option>
+              <option value="credit_pj_principal_defined">Crédito PJ</option>
+              <option value="insurance_vgbl">VGBL</option>
+            </Select>
+          </Field>
+          <Field label="Status">
+            <Select name="status" defaultValue="">
+              <option value="">Todos</option>
+              {Object.entries(calculationStatusLabels).map(([value, label]) => (
+                <option key={value} value={value}>
+                  {label}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="Operação desde">
+            <Input name="occurredFrom" type="date" />
+          </Field>
+          <Field label="Operação até">
+            <Input name="occurredTo" type="date" />
+          </Field>
+          <div className="ledger-filter-action">
+            <Button type="submit">Aplicar filtros</Button>
+          </div>
+        </form>
+        {error || pageError ? (
+          <Empty text={error || pageError} />
+        ) : loading && rows.length === 0 ? (
           <Empty text="Carregando histórico..." />
         ) : rows.length ? (
-          <CalculationRows rows={rows} />
+          <>
+            <CalculationRows
+              rows={rows}
+              selectedId={selectedCalculation?.id}
+              onSelect={(calculationId) => void inspectCalculation(calculationId)}
+            />
+            {nextCursor && (
+              <div className="ledger-pagination">
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={loadingMore}
+                  onClick={loadMore}
+                >
+                  {loadingMore ? "Carregando..." : "Carregar mais"}
+                </Button>
+              </div>
+            )}
+            {detailLoading && <Empty text="Carregando memória do cálculo..." />}
+            {selectedCalculation && !detailLoading && (
+              <CalculationDetail
+                calculation={selectedCalculation}
+                canRecalculate={
+                  canRecalculate &&
+                  (selectedCalculation.outcome.kind === "calculated" ||
+                    selectedCalculation.outcome.kind === "not_applicable")
+                }
+                busy={recalculating}
+                onRecalculate={() => void recalculateSelected()}
+              />
+            )}
+          </>
         ) : (
           <Empty text="Nenhum cálculo encontrado." />
         )}
       </Panel>
+      <CalculationExports filters={activeFilters} canCreate={canExport} />
     </>
   );
 }
 
-function Company() {
-  const { data: company, error, loading } =
-    useApiQuery<any>("/api/company");
+const importStatusLabels: Record<ImportBatch["status"], string> = {
+  draft: "Mapeamento pendente",
+  validating: "Validando",
+  ready: "Pronto para processar",
+  processing: "Calculando",
+  requires_review: "Requer revisão",
+  closed: "Fechado",
+  failed: "Falhou",
+  cancelled: "Cancelado",
+};
+
+function Imports({
+  segment,
+  canCreate,
+  canReview,
+  canRetry,
+}: {
+  segment: "credit_provider" | "insurance_pension";
+  canCreate: boolean;
+  canReview: boolean;
+  canRetry: boolean;
+}) {
+  const importOperationType =
+    segment === "credit_provider"
+      ? "credit_pj_principal_defined"
+      : "insurance_vgbl";
+  const batches = useApiQuery<ImportBatch[]>("/api/import-batches?limit=25");
+  const jobs = useApiQuery<BackgroundJob[]>("/api/jobs?limit=25");
+  const profiles = useApiQuery<ImportMappingProfile[]>(
+    `/api/import-mapping-profiles?operationType=${importOperationType}`,
+  );
+  const [selected, setSelected] = React.useState<ImportBatchDetail | null>(null);
+  const [step, setStep] = React.useState(1);
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState("");
+  const [reviewRows, setReviewRows] = React.useState<ImportBatchReviewRow[]>([]);
+  const [reviewNextRow, setReviewNextRow] = React.useState<number | null>(null);
+  const [reviewLoading, setReviewLoading] = React.useState(false);
+  const [reviewNote, setReviewNote] = React.useState("");
+  const [acknowledgedInvalidRows, setAcknowledgedInvalidRows] = React.useState(false);
+  const [acknowledgedFailedRows, setAcknowledgedFailedRows] = React.useState(false);
+  const [selectedProfileId, setSelectedProfileId] = React.useState("");
+  const [jobDetail, setJobDetail] = React.useState<BackgroundJobDetail | null>(null);
+  const [loadingJobId, setLoadingJobId] = React.useState<string | null>(null);
+
+  const loadReviewRows = React.useCallback(
+    async (batchId: string, afterRowNumber?: number) => {
+      setReviewLoading(true);
+      setError("");
+      try {
+        const params = new URLSearchParams({ status: "all", limit: "50" });
+        if (afterRowNumber) params.set("afterRowNumber", String(afterRowNumber));
+        const page = await api<ImportBatchReviewPage>(
+          `/api/import-batches/${batchId}/review-rows?${params.toString()}`,
+        );
+        setReviewRows((current) =>
+          afterRowNumber ? [...current, ...page.items] : page.items,
+        );
+        setReviewNextRow(page.nextRowNumber);
+      } catch (reason) {
+        setError(
+          reason instanceof Error
+            ? reason.message
+            : "Falha ao carregar as linhas para revisão.",
+        );
+      } finally {
+        setReviewLoading(false);
+      }
+    },
+    [],
+  );
+
+  const refreshSelected = React.useCallback(async () => {
+    if (!selected) return;
+    const next = await api<ImportBatchDetail>(`/api/import-batches/${selected.id}`);
+    setSelected(next);
+    if (next.status === "ready") setStep(3);
+    if (next.status === "processing") setStep(4);
+    if (next.status === "requires_review") setStep(4);
+  }, [selected?.id]);
+
+  React.useEffect(() => {
+    const active =
+      selected?.status === "validating" || selected?.status === "processing";
+    if (!active) return;
+    const timer = window.setInterval(() => {
+      void refreshSelected();
+      void jobs.reload();
+      void batches.reload();
+    }, 2_000);
+    return () => window.clearInterval(timer);
+  }, [selected?.status, refreshSelected, jobs.reload, batches.reload]);
+
+  React.useEffect(() => {
+    setReviewRows([]);
+    setReviewNextRow(null);
+    setReviewNote("");
+    setAcknowledgedInvalidRows(false);
+    setAcknowledgedFailedRows(false);
+    if (selected?.status === "requires_review" && canReview) {
+      void loadReviewRows(selected.id);
+    }
+  }, [selected?.id, selected?.status, canReview, loadReviewRows]);
+
+  async function upload(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      const form = new FormData(event.currentTarget);
+      const created = await api<ImportBatch>("/api/import-batches", {
+        method: "POST",
+        body: form,
+      });
+      setSelected({ ...created, mapping: null, rowErrors: [] });
+      setSelectedProfileId("");
+      setStep(2);
+      await batches.reload();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Falha no upload.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function validate(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selected) return;
+    setBusy(true);
+    setError("");
+    const form = new FormData(event.currentTarget);
+    const columns =
+      segment === "credit_provider"
+        ? {
+            occurredOn: String(form.get("occurredOn")),
+            amount: String(form.get("amount")),
+            termInDays: String(form.get("termInDays")),
+          }
+        : {
+            occurredOn: String(form.get("occurredOn")),
+            amount: String(form.get("amount")),
+            payer: String(form.get("payer")),
+            priorSameInsurer: String(form.get("priorSameInsurer") || "") || undefined,
+            priorAllInsurers: String(form.get("priorAllInsurers") || "") || undefined,
+          };
+    try {
+      await api(`/api/import-batches/${selected.id}/validate`, {
+        method: "POST",
+        body: JSON.stringify({
+          mapping: {
+            operationType:
+              segment === "credit_provider"
+                ? "credit_pj_principal_defined"
+                : "insurance_vgbl",
+            dateFormat: form.get("dateFormat"),
+            numberFormat: form.get("numberFormat"),
+            columns,
+          },
+          profileName: String(form.get("profileName") || "") || undefined,
+        }),
+      });
+      setSelected({ ...selected, status: "validating" });
+      setStep(3);
+      await Promise.all([jobs.reload(), batches.reload(), profiles.reload()]);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Falha na validação.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function processBatch() {
+    if (!selected) return;
+    setBusy(true);
+    setError("");
+    try {
+      await api(`/api/import-batches/${selected.id}/process`, { method: "POST" });
+      setSelected({ ...selected, status: "processing" });
+      setStep(4);
+      await Promise.all([jobs.reload(), batches.reload()]);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Falha ao iniciar o lote.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function retry(jobId: string) {
+    setError("");
+    try {
+      await api(`/api/jobs/${jobId}/retry`, { method: "POST" });
+      setJobDetail(null);
+      await Promise.all([jobs.reload(), batches.reload(), refreshSelected()]);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Falha ao tentar novamente.");
+    }
+  }
+
+  async function toggleJobDetail(jobId: string) {
+    if (jobDetail?.id === jobId) {
+      setJobDetail(null);
+      return;
+    }
+    setLoadingJobId(jobId);
+    setError("");
+    try {
+      setJobDetail(await api<BackgroundJobDetail>(`/api/jobs/${jobId}`));
+    } catch (reason) {
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : "Falha ao carregar as tentativas do job.",
+      );
+    } finally {
+      setLoadingJobId(null);
+    }
+  }
+
+  async function closeReview(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selected) return;
+    setBusy(true);
+    setError("");
+    try {
+      const closed = await api<ImportBatch>(
+        `/api/import-batches/${selected.id}/close-review`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            note: reviewNote,
+            acknowledgedInvalidRows,
+            acknowledgedFailedRows,
+          }),
+        },
+      );
+      setSelected({ ...selected, ...closed });
+      await batches.reload();
+    } catch (reason) {
+      setError(
+        reason instanceof Error ? reason.message : "Falha ao encerrar a revisão.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function cancelBatch() {
+    if (!selected) return;
+    setBusy(true);
+    setError("");
+    try {
+      const cancelled = await api<ImportBatch>(
+        `/api/import-batches/${selected.id}/cancel`,
+        {
+          method: "POST",
+          body: JSON.stringify({ reason: reviewNote }),
+        },
+      );
+      setSelected({ ...selected, ...cancelled });
+      await batches.reload();
+    } catch (reason) {
+      setError(
+        reason instanceof Error ? reason.message : "Falha ao cancelar o lote.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deleteSelectedProfile() {
+    if (!selectedProfileId) return;
+    setBusy(true);
+    setError("");
+    try {
+      await api(
+        `/api/import-mapping-profiles/${encodeURIComponent(selectedProfileId)}`,
+        { method: "DELETE" },
+      );
+      setSelectedProfileId("");
+      await profiles.reload();
+    } catch (reason) {
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : "Falha ao excluir o perfil de mapeamento.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const relatedJobs = jobs.data?.filter(
+    (job) => !selected || job.batchId === selected.id,
+  );
+  const currentJob = relatedJobs?.[0];
+  const progress = currentJob?.progress.total
+    ? Math.round((currentJob.progress.current / currentJob.progress.total) * 100)
+    : currentJob?.status === "completed"
+      ? 100
+      : 0;
+  const canCancelSelected =
+    selected !== null &&
+    ["draft", "ready", "requires_review", "failed"].includes(selected.status);
+  const selectedProfile = profiles.data?.find(
+    (profile) => profile.id === selectedProfileId,
+  );
+  const profileColumns = selectedProfile?.mapping.columns as
+    | Readonly<Record<string, string | undefined>>
+    | undefined;
+  const missingProfileColumns = selectedProfile && selected
+    ? Object.values(profileColumns ?? {}).filter(
+        (column): column is string =>
+          typeof column === "string" &&
+          column.length > 0 &&
+          !selected.headers.includes(column),
+      )
+    : [];
+  const columnOptions = (optional = false) => (
+    <>
+      {optional && <option value="">Não importar</option>}
+      {selected?.headers.map((header) => (
+        <option key={header} value={header}>{header}</option>
+      ))}
+    </>
+  );
+
+  return (
+    <>
+      <div className="page-heading">
+        <div>
+          <span className="eyebrow">Operação em lote</span>
+          <h1>Importações</h1>
+          <p>Valide, calcule e revise operações sem depender de planilhas manuais.</p>
+        </div>
+        {canCreate && selected && (
+          <Button variant="outline" onClick={() => { setSelected(null); setSelectedProfileId(""); setStep(1); }}>
+            <UploadCloud size={16} /> Nova importação
+          </Button>
+        )}
+      </div>
+      {canCreate && (
+        <Panel title="Assistente de importação" subtitle={`Etapa ${step} de 4`}>
+          <div className="import-stepper" aria-label={`Etapa ${step} de 4`}>
+            {["Arquivo", "Colunas", "Validação", "Processamento"].map((label, index) => (
+              <div className={index + 1 <= step ? "active" : ""} key={label}>
+                <span>{index + 1}</span><small>{label}</small>
+              </div>
+            ))}
+          </div>
+          {error && <p className="form-error">{error}</p>}
+          {step === 1 && (
+            <form className="import-upload" onSubmit={upload}>
+              <UploadCloud size={30} />
+              <strong>Selecione um arquivo CSV</strong>
+              <span>Até 10 MB. A primeira linha deve conter os nomes das colunas.</span>
+              <Input name="file" type="file" accept=".csv,text/csv" required />
+              <Button disabled={busy}>{busy ? "Enviando..." : "Enviar e detectar colunas"}</Button>
+            </form>
+          )}
+          {step === 2 && selected && (
+            <form
+              key={selectedProfileId || "manual-mapping"}
+              className="mapping-grid"
+              onSubmit={validate}
+            >
+              <div className="mapping-summary">
+                <strong>{selected.originalFileName}</strong>
+                <span>{selected.totalRows} linhas · {selected.headers.length} colunas detectadas</span>
+              </div>
+              <div className="mapping-profile-picker">
+                <Field
+                  label="Perfil de mapeamento"
+                  hint="Reaplique um layout salvo ou mantenha o preenchimento manual."
+                >
+                  <Select
+                    value={selectedProfileId}
+                    onChange={(event) => setSelectedProfileId(event.target.value)}
+                  >
+                    <option value="">Mapeamento manual</option>
+                    {profiles.data?.map((profile) => (
+                      <option key={profile.id} value={profile.id}>
+                        {profile.name}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+                {selectedProfile && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={busy}
+                    onClick={() => void deleteSelectedProfile()}
+                  >
+                    Excluir perfil
+                  </Button>
+                )}
+              </div>
+              {profiles.error && <p className="form-error mapping-profile-error">{profiles.error}</p>}
+              {!!missingProfileColumns.length && (
+                <p className="mapping-profile-warning">
+                  Este arquivo não contém: {missingProfileColumns.join(", ")}. Ajuste as colunas antes de validar.
+                </p>
+              )}
+              <Field label="Data da operação"><Select name="occurredOn" defaultValue={profileColumns?.occurredOn} required>{columnOptions()}</Select></Field>
+              <Field label="Valor"><Select name="amount" defaultValue={profileColumns?.amount} required>{columnOptions()}</Select></Field>
+              {segment === "credit_provider" ? (
+                <Field label="Prazo em dias"><Select name="termInDays" defaultValue={profileColumns?.termInDays} required>{columnOptions()}</Select></Field>
+              ) : (
+                <>
+                  <Field label="Responsável pelo aporte"><Select name="payer" defaultValue={profileColumns?.payer} required>{columnOptions()}</Select></Field>
+                  <Field label="Aportes na mesma seguradora"><Select name="priorSameInsurer" defaultValue={profileColumns?.priorSameInsurer}>{columnOptions(true)}</Select></Field>
+                  <Field label="Aportes em todas as seguradoras"><Select name="priorAllInsurers" defaultValue={profileColumns?.priorAllInsurers}>{columnOptions(true)}</Select></Field>
+                </>
+              )}
+              <Field label="Formato da data"><Select name="dateFormat" defaultValue={selectedProfile?.mapping.dateFormat ?? "dd/mm/yyyy"}><option value="dd/mm/yyyy">DD/MM/AAAA</option><option value="yyyy-mm-dd">AAAA-MM-DD</option></Select></Field>
+              <Field label="Formato dos valores"><Select name="numberFormat" defaultValue={selectedProfile?.mapping.numberFormat ?? "decimal_comma"}><option value="decimal_comma">10.000,50</option><option value="decimal_dot">10,000.50</option></Select></Field>
+              <Field label={selectedProfile ? "Atualizar perfil" : "Salvar perfil (opcional)"}><Input name="profileName" maxLength={80} defaultValue={selectedProfile?.name} placeholder="Ex.: Exportação do core bancário" /></Field>
+              <div className="form-submit"><Button disabled={busy}>{busy ? "Agendando..." : "Validar arquivo"}</Button></div>
+            </form>
+          )}
+          {step >= 3 && selected && (
+            <div className="import-progress-view">
+              <div className="job-progress"><span style={{ transform: `scaleX(${progress / 100})` }} /></div>
+              <div className="import-progress-heading">
+                <div><strong>{importStatusLabels[selected.status]}</strong><small>{progress}% concluído</small></div>
+                {selected.status === "ready" && (
+                  <Button disabled={busy || selected.validRows === 0} onClick={processBatch}>Processar {selected.validRows} linhas válidas</Button>
+                )}
+                {selected.status === "requires_review" && selected.failedRows > 0 && canCreate && (
+                  <Button variant="outline" disabled={busy} onClick={processBatch}>
+                    <RotateCcw size={15} /> Reprocessar {selected.failedRows} falha(s)
+                  </Button>
+                )}
+              </div>
+              <div className="import-counts">
+                <span><strong>{selected.validRows}</strong> válidas</span>
+                <span><strong>{selected.invalidRows}</strong> inválidas</span>
+                <span><strong>{selected.processedRows}</strong> calculadas</span>
+                <span><strong>{selected.failedRows}</strong> falhas</span>
+              </div>
+              {selected.status !== "requires_review" && !!selected.rowErrors.length && (
+                <div className="row-errors">
+                  <strong>Amostra de inconsistências</strong>
+                  {selected.rowErrors.map((row) => (
+                    <div key={row.rowNumber}><span>Linha {row.rowNumber}</span><small>{row.errors.map((item) => item.message).join(" · ")}</small></div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+          {selected?.status === "requires_review" && canReview && (
+            <section className="batch-review" aria-labelledby="batch-review-title">
+              <div className="batch-review-heading">
+                <div>
+                  <span className="eyebrow">Decisão do revisor</span>
+                  <h3 id="batch-review-title">Conferir inconsistências</h3>
+                  <p>
+                    Revise as linhas abaixo. Encerrar preserva os cálculos válidos e registra
+                    formalmente as inconsistências reconhecidas.
+                  </p>
+                </div>
+                <span className="review-total">
+                  {selected.invalidRows + selected.failedRows} pendência(s)
+                </span>
+              </div>
+              {reviewLoading && reviewRows.length === 0 ? (
+                <Empty text="Carregando linhas para revisão..." />
+              ) : reviewRows.length ? (
+                <div className="review-row-list">
+                  {reviewRows.map((row) => (
+                    <article key={row.rowNumber}>
+                      <header>
+                        <strong>Linha {row.rowNumber}</strong>
+                        <span className={`badge ${row.status}`}>
+                          {row.status === "invalid" ? "Inválida" : "Falha no cálculo"}
+                        </span>
+                      </header>
+                      <div className="review-row-data">
+                        {Object.entries(row.rawData).map(([field, value]) => (
+                          <span key={field}>
+                            <small>{field}</small>
+                            <code>{value}</code>
+                          </span>
+                        ))}
+                      </div>
+                      <ul>
+                        {row.errors.map((item, index) => (
+                          <li key={`${item.field}-${item.code}-${index}`}>{item.message}</li>
+                        ))}
+                      </ul>
+                    </article>
+                  ))}
+                  {reviewNextRow && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={reviewLoading}
+                      onClick={() => void loadReviewRows(selected.id, reviewNextRow)}
+                    >
+                      {reviewLoading ? "Carregando..." : "Carregar mais inconsistências"}
+                    </Button>
+                  )}
+                </div>
+              ) : (
+                <Empty text="Nenhuma inconsistência permanece neste lote." />
+              )}
+              <form className="review-decision" onSubmit={closeReview}>
+                <Field
+                  label="Nota da decisão"
+                  hint="Explique brevemente a conferência realizada; esta nota irá para a auditoria."
+                >
+                  <textarea
+                    value={reviewNote}
+                    onChange={(event) => setReviewNote(event.target.value)}
+                    minLength={5}
+                    maxLength={1_000}
+                    required
+                  />
+                </Field>
+                {selected.invalidRows > 0 && (
+                  <label className="review-acknowledgement">
+                    <input
+                      type="checkbox"
+                      checked={acknowledgedInvalidRows}
+                      onChange={(event) => setAcknowledgedInvalidRows(event.target.checked)}
+                    />
+                    <span>
+                      Reconheço que {selected.invalidRows} linha(s) inválida(s) não geraram cálculo.
+                    </span>
+                  </label>
+                )}
+                {selected.failedRows > 0 && (
+                  <label className="review-acknowledgement">
+                    <input
+                      type="checkbox"
+                      checked={acknowledgedFailedRows}
+                      onChange={(event) => setAcknowledgedFailedRows(event.target.checked)}
+                    />
+                    <span>
+                      Reconheço que {selected.failedRows} linha(s) falharam durante o cálculo.
+                    </span>
+                  </label>
+                )}
+                <div className="review-actions">
+                  <Button
+                    type="submit"
+                    disabled={
+                      busy ||
+                      reviewNote.trim().length < 5 ||
+                      (selected.invalidRows > 0 && !acknowledgedInvalidRows) ||
+                      (selected.failedRows > 0 && !acknowledgedFailedRows)
+                    }
+                  >
+                    {busy ? "Registrando..." : "Encerrar lote revisado"}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    disabled={busy || reviewNote.trim().length < 5}
+                    onClick={() => void cancelBatch()}
+                  >
+                    Cancelar lote
+                  </Button>
+                </div>
+              </form>
+            </section>
+          )}
+          {selected && canReview && canCancelSelected && selected.status !== "requires_review" && (
+            <section className="batch-cancel">
+              <Field
+                label="Motivo do cancelamento"
+                hint="O lote será preservado para auditoria e não poderá ser reaberto."
+              >
+                <textarea
+                  value={reviewNote}
+                  onChange={(event) => setReviewNote(event.target.value)}
+                  minLength={5}
+                  maxLength={1_000}
+                />
+              </Field>
+              <Button
+                type="button"
+                variant="destructive"
+                disabled={busy || reviewNote.trim().length < 5}
+                onClick={() => void cancelBatch()}
+              >
+                {busy ? "Cancelando..." : "Cancelar lote"}
+              </Button>
+            </section>
+          )}
+        </Panel>
+      )}
+      <div className="imports-grid">
+        <Panel title="Lotes recentes" subtitle="Arquivos pertencentes somente a este workspace.">
+          {batches.loading ? <Empty text="Carregando lotes..." /> : batches.data?.length ? (
+            <div className="batch-list">{batches.data.map((batch) => (
+              <button key={batch.id} onClick={() => void api<ImportBatchDetail>(`/api/import-batches/${batch.id}`).then((detail) => { setSelected(detail); setStep(detail.status === "draft" ? 2 : detail.status === "validating" || detail.status === "ready" ? 3 : 4); })}>
+                <span><strong>{batch.originalFileName}</strong><small>{batch.totalRows} linhas · {new Date(batch.createdAt).toLocaleString("pt-BR")}</small></span>
+                <span className={`badge ${batch.status}`}>{importStatusLabels[batch.status]}</span>
+              </button>
+            ))}</div>
+          ) : <Empty text="Nenhum lote importado." />}
+        </Panel>
+        <Panel title="Jobs" subtitle="Tentativas, progresso e falhas técnicas.">
+          {jobs.loading ? <Empty text="Carregando jobs..." /> : relatedJobs?.length ? (
+            <div className="job-list">{relatedJobs.map((job) => (
+              <article key={job.id}>
+                <div className="job-summary">
+                  <span><strong>{job.type === "imports.validate" ? "Validação" : job.type === "imports.process" ? "Cálculo em lote" : "Exportação"}</strong><small>{job.attemptsMade}/{job.maxAttempts} tentativas</small></span>
+                  <span className={`badge ${job.status}`}>{job.status}</span>
+                  <button type="button" onClick={() => void toggleJobDetail(job.id)}>
+                    {loadingJobId === job.id ? "Carregando..." : jobDetail?.id === job.id ? "Ocultar" : "Detalhes"}
+                  </button>
+                  {job.status === "failed" && canRetry && <button type="button" onClick={() => void retry(job.id)}><RotateCcw size={13} /> Tentar novamente</button>}
+                </div>
+                {jobDetail?.id === job.id && (
+                  <div className="job-attempts">
+                    <div className="job-correlation">
+                      <span>Correlação do job</span>
+                      <code>{jobDetail.correlationId}</code>
+                    </div>
+                    {jobDetail.attempts.length ? jobDetail.attempts.map((attempt) => (
+                      <div className="job-attempt" key={attempt.id}>
+                        <span className={`attempt-dot ${attempt.status}`} />
+                        <div>
+                          <strong>Tentativa {attempt.number}</strong>
+                          <small>{new Date(attempt.startedAt).toLocaleString("pt-BR")}</small>
+                          <code>{attempt.correlationId}</code>
+                          {attempt.errorMessage && <p>{attempt.errorMessage}</p>}
+                        </div>
+                        <span className={`badge ${attempt.status}`}>{attempt.status}</span>
+                      </div>
+                    )) : <Empty text="Este job ainda não iniciou nenhuma tentativa." />}
+                  </div>
+                )}
+              </article>
+            ))}</div>
+          ) : <Empty text="Nenhum job para exibir." />}
+        </Panel>
+      </div>
+    </>
+  );
+}
+
+type PendingInvitation = {
+  id: string;
+  email: string;
+  role: string;
+  status: string;
+  expiresAt: Date | string;
+};
+
+function Company({
+  canManage,
+  currentUserId,
+}: {
+  canManage: boolean;
+  currentUserId: string;
+}) {
+  const { data: company, error, loading, reload } =
+    useApiQuery<CompanyDto>("/api/company");
+  const [invitations, setInvitations] = React.useState<PendingInvitation[]>([]);
+  const [teamError, setTeamError] = React.useState("");
+  const [busy, setBusy] = React.useState(false);
+  const [inviteLink, setInviteLink] = React.useState("");
+  const [copied, setCopied] = React.useState(false);
+
+  const reloadInvitations = React.useCallback(async () => {
+    if (!canManage) return;
+    const result = await authClient.organization.listInvitations();
+    if (result.error) {
+      setTeamError(result.error.message ?? "Falha ao carregar convites.");
+      return;
+    }
+    setInvitations((result.data ?? []) as PendingInvitation[]);
+  }, [canManage]);
+
+  React.useEffect(() => {
+    void reloadInvitations();
+  }, [reloadInvitations]);
+
+  async function invite(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBusy(true);
+    setTeamError("");
+    const form = new FormData(event.currentTarget);
+    const result = await authClient.organization.inviteMember({
+      email: String(form.get("email")),
+      role: String(form.get("role")) as "admin" | "operator" | "reviewer",
+    });
+    if (result.error || !result.data) {
+      setTeamError(result.error?.message ?? "Não foi possível criar o convite.");
+      setBusy(false);
+      return;
+    }
+    setInviteLink(`${window.location.origin}/?invitation=${result.data.id}`);
+    setCopied(false);
+    event.currentTarget.reset();
+    await reloadInvitations();
+    setBusy(false);
+  }
+
+  async function cancelInvitation(invitationId: string) {
+    setTeamError("");
+    const result = await authClient.organization.cancelInvitation({ invitationId });
+    if (result.error) setTeamError(result.error.message ?? "Falha ao cancelar convite.");
+    else await reloadInvitations();
+  }
+
+  async function updateMemberRole(
+    memberId: string,
+    role: "admin" | "operator" | "reviewer",
+  ) {
+    setTeamError("");
+    try {
+      await api(`/api/team/members/${memberId}/role`, {
+        method: "PATCH",
+        body: JSON.stringify({ role }),
+      });
+      await reload();
+    } catch (reason) {
+      setTeamError(reason instanceof Error ? reason.message : "Falha ao alterar o papel.");
+    }
+  }
+
+  async function removeMember(memberId: string) {
+    if (!window.confirm("Remover este usuário do workspace?")) return;
+    setTeamError("");
+    try {
+      await api(`/api/team/members/${memberId}`, { method: "DELETE" });
+      await reload();
+    } catch (reason) {
+      setTeamError(reason instanceof Error ? reason.message : "Falha ao remover usuário.");
+    }
+  }
   return (
     <>
       <div className="page-heading">
@@ -752,7 +2133,7 @@ function Company() {
           <Empty text={error} />
         ) : company ? (
           <div className="member-list">
-            {company.members.map((member: any) => (
+            {company.members.map((member) => (
               <div className="member" key={member.id}>
                 <span className="avatar">
                   {member.user.name.slice(0, 2).toUpperCase()}
@@ -761,12 +2142,217 @@ function Company() {
                   <strong>{member.user.name}</strong>
                   <small>{member.user.email}</small>
                 </div>
-                <span className="badge neutral">{member.role}</span>
+                {canManage && member.role !== "owner" && member.user.id !== currentUserId ? (
+                  <div className="member-actions">
+                    <Select
+                      aria-label={`Papel de ${member.user.name}`}
+                      value={member.role}
+                      onChange={(event) =>
+                        void updateMemberRole(
+                          member.id,
+                          event.target.value as "admin" | "operator" | "reviewer",
+                        )
+                      }
+                    >
+                      <option value="operator">Operador</option>
+                      <option value="reviewer">Revisor</option>
+                      <option value="admin">Administrador</option>
+                    </Select>
+                    <button type="button" onClick={() => void removeMember(member.id)}>Remover</button>
+                  </div>
+                ) : (
+                  <span className="badge neutral">
+                    {organizationRoleLabel(member.role)}
+                  </span>
+                )}
               </div>
             ))}
           </div>
         ) : (
           <Empty text="Carregando empresa..." />
+        )}
+      </Panel>
+      {canManage && (
+        <Panel title="Convidar usuário" subtitle="No ambiente local, compartilhe o link copiável com o destinatário do e-mail informado.">
+          <form className="team-invite-form" onSubmit={invite}>
+            <Field label="E-mail do usuário"><Input name="email" type="email" required /></Field>
+            <Field label="Papel inicial">
+              <Select name="role" defaultValue="operator">
+                <option value="operator">Operador</option>
+                <option value="reviewer">Revisor</option>
+                <option value="admin">Administrador</option>
+              </Select>
+            </Field>
+            <Button disabled={busy}>{busy ? "Criando..." : "Criar convite"}</Button>
+          </form>
+          {inviteLink && (
+            <div className="invite-link-result">
+              <code>{inviteLink}</code>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() =>
+                  void navigator.clipboard.writeText(inviteLink).then(() => {
+                    setCopied(true);
+                    window.setTimeout(() => setCopied(false), 2_000);
+                  })
+                }
+              >
+                {copied ? "Link copiado" : "Copiar link"}
+              </Button>
+            </div>
+          )}
+          {teamError && <p className="form-error">{teamError}</p>}
+          {invitations.some((invitation) => invitation.status === "pending") && (
+            <div className="pending-invitations">
+              {invitations.filter((invitation) => invitation.status === "pending").map((invitation) => (
+                <div key={invitation.id}>
+                  <span><strong>{invitation.email}</strong><small>{organizationRoleLabel(invitation.role as OrganizationRole)} · expira em {new Date(invitation.expiresAt).toLocaleString("pt-BR")}</small></span>
+                  <button type="button" onClick={() => void cancelInvitation(invitation.id)}>Cancelar</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </Panel>
+      )}
+    </>
+  );
+}
+
+const auditCategoryLabels: Record<AuditCategory, string> = {
+  calculations: "Cálculos",
+  imports: "Importações",
+  exports: "Exportações",
+  jobs: "Jobs",
+  organization: "Organização",
+};
+
+const auditActionLabels: Record<string, string> = {
+  "organization.onboarded": "Empresa cadastrada",
+  "organization.profile_completed": "Perfil cadastral concluído",
+  "organization.invitation_created": "Convite criado",
+  "organization.invitation_accepted": "Convite aceito",
+  "organization.invitation_cancelled": "Convite cancelado",
+  "organization.member_role_updated": "Papel de usuário alterado",
+  "organization.member_removed": "Usuário removido",
+  "calculation.created": "Cálculo registrado",
+  "import.batch_uploaded": "Arquivo importado",
+  "import.validation_requested": "Validação solicitada",
+  "import.processing_requested": "Processamento solicitado",
+  "import.review_closed": "Revisão do lote encerrada",
+  "import.batch_cancelled": "Lote cancelado",
+  "import.mapping_profile_deleted": "Perfil de mapeamento excluído",
+  "calculation_export.requested": "Exportação solicitada",
+  "calculation_export.generated": "Exportação gerada",
+  "background_job.retry_requested": "Nova tentativa solicitada",
+  "background_job.recovered": "Job recuperado após falha",
+};
+
+function OrganizationAudit() {
+  const [category, setCategory] = React.useState<AuditCategory | "">("");
+  const path = `/api/audit-events?limit=30${category ? `&category=${category}` : ""}`;
+  const { data, error, loading } = useApiQuery<AuditEventPage>(path);
+  const [events, setEvents] = React.useState<AuditEventPage["items"]>([]);
+  const [nextCursor, setNextCursor] = React.useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = React.useState(false);
+  const [pageError, setPageError] = React.useState("");
+
+  React.useEffect(() => {
+    if (!data) return;
+    setEvents(data.items);
+    setNextCursor(data.nextCursor);
+  }, [data]);
+
+  async function loadMore() {
+    if (!nextCursor) return;
+    setLoadingMore(true);
+    setPageError("");
+    try {
+      const page = await api<AuditEventPage>(
+        `${path}&cursor=${encodeURIComponent(nextCursor)}`,
+      );
+      setEvents((current) => [...current, ...page.items]);
+      setNextCursor(page.nextCursor);
+    } catch (reason) {
+      setPageError(
+        reason instanceof Error
+          ? reason.message
+          : "Não foi possível carregar mais eventos.",
+      );
+    } finally {
+      setLoadingMore(false);
+    }
+  }
+
+  return (
+    <>
+      <div className="page-heading">
+        <div>
+          <span className="eyebrow">Governança operacional</span>
+          <h1>Trilha de auditoria</h1>
+          <p>Quem fez o quê, quando e sobre qual registro da sua empresa.</p>
+        </div>
+        <label className="audit-filter">
+          <span>Categoria</span>
+          <Select
+            value={category}
+            onChange={(event) => {
+              setCategory(event.target.value as AuditCategory | "");
+              setEvents([]);
+              setNextCursor(null);
+            }}
+          >
+            <option value="">Todas as ações</option>
+            {Object.entries(auditCategoryLabels).map(([value, label]) => (
+              <option value={value} key={value}>{label}</option>
+            ))}
+          </Select>
+        </label>
+      </div>
+      <Panel
+        title="Eventos da organização"
+        subtitle="O conteúdo técnico interno permanece protegido; esta visão expõe apenas a trilha necessária para rastreabilidade."
+      >
+        {error || pageError ? (
+          <Empty text={error || pageError} />
+        ) : loading ? (
+          <Empty text="Carregando auditoria..." />
+        ) : events.length ? (
+          <>
+            <div className="audit-list tenant-audit-list">
+              {events.map((event) => (
+                <div key={event.id}>
+                  <span className="audit-dot" />
+                  <div>
+                    <span className="audit-event-heading">
+                      <strong>{auditActionLabels[event.action] ?? event.action}</strong>
+                      <span className="badge neutral">
+                        {auditCategoryLabels[event.category]}
+                      </span>
+                    </span>
+                    <small>
+                      {event.actor?.name ?? "Sistema"} · {event.entityType} · <code>{event.entityId}</code>
+                    </small>
+                  </div>
+                  <time>{new Date(event.occurredAt).toLocaleString("pt-BR")}</time>
+                </div>
+              ))}
+            </div>
+            {nextCursor && (
+              <div className="ledger-pagination">
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={loadingMore}
+                  onClick={() => void loadMore()}
+                >
+                  {loadingMore ? "Carregando..." : "Carregar eventos anteriores"}
+                </Button>
+              </div>
+            )}
+          </>
+        ) : (
+          <Empty text="Nenhum evento encontrado para este filtro." />
         )}
       </Panel>
     </>
@@ -1077,12 +2663,30 @@ function Dashboard({ me }: { me: Me }) {
   const [section, setSection] = React.useState<Section>("overview");
   const [mobile, setMobile] = React.useState(false);
   const organization = me.membership!.organization;
+  const permissions = me.membership!.permissions;
+  const canCreateCalculation = permissions.includes("calculation:create");
+  const canCreateBatch = permissions.includes("batch:create");
+  const canReviewBatch = permissions.includes("batch:review");
+  const canRetryJob = permissions.includes("job:retry");
+  const canExport = permissions.includes("export:create");
+  const canReadAudit = permissions.includes("audit:read");
+  const canManageTeam = permissions.includes("team:manage");
   const nav: { id: Section; label: string; icon: LucideIcon }[] = [
     { id: "overview", label: "Visão geral", icon: LayoutDashboard },
-    { id: "calculate", label: "Novo cálculo", icon: Calculator },
     { id: "history", label: "Histórico", icon: FileClock },
+    { id: "imports", label: "Importações", icon: UploadCloud },
     { id: "company", label: "Empresa e equipe", icon: Users },
   ];
+  if (canReadAudit) {
+    nav.push({ id: "activity", label: "Trilha de auditoria", icon: ShieldCheck });
+  }
+  if (canCreateCalculation) {
+    nav.splice(1, 0, {
+      id: "calculate",
+      label: "Novo cálculo",
+      icon: Calculator,
+    });
+  }
   if (me.platformRole === "super_admin")
     nav.push(
       { id: "rules", label: "Regras globais", icon: Settings2 },
@@ -1137,7 +2741,7 @@ function Dashboard({ me }: { me: Me }) {
           <div>
             <strong>{me.name}</strong>
             <small>
-              {me.membership!.role}
+              {organizationRoleLabel(me.membership!.role)}
               {me.platformRole === "super_admin" ? " · super-admin" : ""}
             </small>
           </div>
@@ -1159,13 +2763,37 @@ function Dashboard({ me }: { me: Me }) {
           </button>
           <div className="brand dark">TaxMan</div>
         </header>
+        <div className="workspace-toolbar">
+          <NotificationBell />
+        </div>
         <div className="workspace-content">
-          {section === "overview" && <Overview setSection={setSection} />}
+          {section === "overview" && (
+            <Overview
+              setSection={setSection}
+              canCreateCalculation={canCreateCalculation}
+            />
+          )}
           {section === "calculate" && (
             <Calculate segment={organization.segment} />
           )}
-          {section === "history" && <History />}
-          {section === "company" && <Company />}
+          {section === "history" && (
+            <History
+              canExport={canExport}
+              canRecalculate={canCreateCalculation}
+            />
+          )}
+          {section === "imports" && (
+            <Imports
+              segment={organization.segment}
+              canCreate={canCreateBatch}
+              canReview={canReviewBatch}
+              canRetry={canRetryJob}
+            />
+          )}
+          {section === "company" && (
+            <Company canManage={canManageTeam} currentUserId={me.id} />
+          )}
+          {section === "activity" && <OrganizationAudit />}
           {section === "rules" && <Rules />}
           {section === "audit" && <Rules audit />}
         </div>
@@ -1179,6 +2807,11 @@ export default function Page() {
   const [me, setMe] = React.useState<Me | null>(null);
   const [loadingMe, setLoadingMe] = React.useState(true);
   const [meError, setMeError] = React.useState("");
+  const [invitationId] = React.useState<string | null>(() =>
+    typeof window === "undefined"
+      ? null
+      : new URLSearchParams(window.location.search).get("invitation"),
+  );
   React.useEffect(() => {
     if (!session.data) {
       setLoadingMe(false);
@@ -1206,13 +2839,17 @@ export default function Page() {
         <strong>TaxMan</strong>
       </div>
     );
-  if (!session.data) return <AuthScreen />;
+  if (!session.data) return <AuthScreen invitationId={invitationId} />;
   if (meError || !me)
     return (
       <div className="loading-screen">
         {meError || "Não foi possível carregar seu perfil."}
       </div>
     );
+  if (invitationId) {
+    return <InvitationAcceptance invitationId={invitationId} />;
+  }
   if (me.onboardingRequired) return <Onboarding me={me} />;
+  if (me.profileRequired) return <ProfileCompletion me={me} />;
   return <Dashboard me={me} />;
 }

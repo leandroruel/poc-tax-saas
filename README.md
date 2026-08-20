@@ -16,7 +16,8 @@ docker compose up --build
 
 A primeira saída pode ser usada em `BETTER_AUTH_SECRET`; as duas seguintes, em
 `PERSONAL_DATA_ENCRYPTION_KEY` e `PERSONAL_DATA_INDEX_KEY`. Defina também uma
-senha própria em `TAXMAN_ADMIN_PASSWORD`.
+senha própria em `TAXMAN_ADMIN_PASSWORD` e uma senha local para o Silo em
+`SILO_ROOT_PASSWORD`.
 
 Acesse `http://localhost:3001`. O seed cria o super-admin usando
 `TAXMAN_ADMIN_EMAIL` e `TAXMAN_ADMIN_PASSWORD`; não existem credenciais padrão
@@ -39,16 +40,49 @@ pnpm dev
 - Web: `http://localhost:3001`
 - API: `http://localhost:3000`
 - Health check: `http://localhost:3000/health`
+- Silo (API S3): `http://localhost:9000`
+- Silo (console local): `http://localhost:9001`
+
+Além dos processos web e API, o Compose inicia:
+
+- PostgreSQL para dados transacionais e auditoria;
+- Redis com AOF e política `noeviction`, usado pelo BullMQ;
+- um worker separado da API para execução assíncrona; cada tipo de job define
+  sua política explícita de tentativas e backoff;
+- Silo, storage local compatível com S3, e a criação idempotente do bucket.
+
+O worker é o responsável pelos gatilhos agendados, incluindo a ativação de
+regras aprovadas quando a vigência chega. API e worker usam as mesmas portas de
+aplicação, sem depender de um provedor de nuvem.
 
 ## Decisões importantes
 
 - Better Auth `Organization` é o tenant canônico; um usuário possui no máximo um `Member` por constraint de banco.
+- Owners e administradores podem criar convites locais para papéis `admin`, `operator` e `reviewer`. O aceite respeita o vínculo único por usuário e exige a conclusão do perfil cadastral criptografado.
+- Convites do ambiente local usam links opacos copiáveis e não verificam o e-mail. Verificação de e-mail e entrega transacional são gates obrigatórios antes de qualquer publicação externa.
+- Alteração de papel e remoção de membro são transacionais e auditadas com o ator real; owner e a própria conta são protegidos contra essas operações.
 - O cliente nunca envia `tenantId`; a API o deriva da organização ativa da sessão.
 - CPF reside em `UserProfile`, protegido por AES-256-GCM e índice cego HMAC-SHA256. A API não devolve CPF.
-- Cálculos e logs de auditoria são append-only; uma recálculo cria novo registro relacionado.
+- Cálculos e logs de auditoria são append-only; um recálculo cria novo registro relacionado e só pode apontar para um cálculo do mesmo tenant.
+- O ledger de cálculos usa cursor estável, filtros validados e escopo obrigatório por organização.
+- A memória de cada cálculo reúne entrada original, resultado, evidências e snapshot da regra. O recálculo parte dessa memória e cria uma revisão vinculada sem sobrescrever o registro anterior.
+- Papéis organizacionais são `owner`, `admin`, `operator` e `reviewer`; permissões são verificadas no servidor, não apenas escondidas na interface.
 - Somente `super_admin` administra regras globais. Tenants não alteram fórmulas.
 - A vigência é escolhida por `operation.occurredOn`, não pela data atual nem por uma data livre de consulta.
 - O MVP suporta somente crédito PJ com principal/prazo definidos e VGBL. Outras modalidades são rejeitadas em vez de aproximadas.
+- Jobs, tentativas e notificações possuem escopo por organização. O sino do dashboard consulta somente notificações do usuário autenticado.
+- Arquivos de importação e exportação usam uma porta S3; localmente ela aponta para o Silo e pode ser trocada por outro storage compatível sem alterar o domínio.
+- A importação CSV usa um assistente de quatro etapas: upload, mapeamento de colunas, validação e cálculo em chunks. Arquivos idênticos são deduplicados por tenant e hash.
+- Perfis de mapeamento pertencem à organização e podem ser reaplicados, atualizados pelo mesmo nome ou excluídos com registro de auditoria.
+- Cada linha válida reutiliza o mesmo caso de uso do cálculo individual. O vínculo linha↔cálculo é atômico, permitindo retomada sem duplicar registros.
+- Um lote processado termina em revisão: linhas inválidas e falhas são paginadas para o revisor, falhas podem ser reprocessadas e o encerramento exige reconhecimento explícito das pendências e uma nota auditável.
+- Lotes não podem ser cancelados enquanto validação ou cálculo ainda escrevem resultados. Fora desses estados, o cancelamento preserva o arquivo e a justificativa na trilha de auditoria.
+- Jobs com falha têm tentativas automáticas e retry manual autorizado; progresso, tentativas e erros permanecem consultáveis no dashboard.
+- Cada tentativa possui correlation ID e erro próprios. A recuperação em uma tentativa posterior gera notificação e evento de auditoria, preservando o histórico das falhas anteriores.
+- A organização possui uma trilha de auditoria própria, paginada e filtrável por categoria. A API expõe identidade do ator e referência do registro, mas mantém os blobs técnicos `before/after` fora da superfície do cliente.
+- O histórico pode ser exportado em CSV compatível com Excel, com colunas e separador configuráveis, ou em JSON de evidência versionado. Os filtros e o instante de corte ficam registrados para que o resultado seja reproduzível.
+- Exportações são geradas pelo worker, armazenadas no Silo e baixadas somente por rota autenticada e escopada pelo tenant. Células CSV potencialmente interpretadas como fórmulas são neutralizadas.
+- O dashboard resume IOF apurado nos últimos 30 dias, resultados que exigem atenção e a atividade diária de 14 dias. A série usa a data de processamento no fuso de São Paulo e sempre filtra a organização autenticada.
 
 Veja [o mapa do domínio](apps/api/src/domain/README.md) para localizar rapidamente cada regra de negócio.
 
