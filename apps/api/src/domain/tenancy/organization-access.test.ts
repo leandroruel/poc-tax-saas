@@ -20,6 +20,8 @@ describe("organization access policy", () => {
 
   it("returns the capabilities exposed to callers", () => {
     expect(organizationPermissions("admin")).toContain("team:manage");
+    expect(organizationPermissions("operator")).toContain("audit:read");
+    expect(organizationPermissions("reviewer")).toContain("audit:read");
   });
 
   it("maps Better Auth's legacy member role to operator", () => {

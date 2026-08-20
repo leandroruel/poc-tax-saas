@@ -1316,6 +1316,29 @@ td small {
   color: var(--muted);
   font-size: 10px;
 }
+.audit-filter {
+  display: grid;
+  min-width: 220px;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.tenant-audit-list > div {
+  grid-template-columns: 12px minmax(0, 1fr) auto;
+}
+.tenant-audit-list code {
+  overflow-wrap: anywhere;
+}
+.audit-event-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.audit-event-heading .badge {
+  font-size: 8px;
+}
 .audit-dot {
   width: 8px;
   height: 8px;

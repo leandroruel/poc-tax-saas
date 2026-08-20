@@ -42,6 +42,8 @@ import type {
   ImportBatchReviewRow,
   Me,
   NotificationFeed,
+  AuditCategory,
+  AuditEventPage,
   OrganizationRole,
 } from "@/lib/api-types";
 
@@ -51,6 +53,7 @@ type Section =
   | "history"
   | "imports"
   | "company"
+  | "activity"
   | "rules"
   | "audit";
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
@@ -1963,6 +1966,140 @@ function Company() {
   );
 }
 
+const auditCategoryLabels: Record<AuditCategory, string> = {
+  calculations: "Cálculos",
+  imports: "Importações",
+  exports: "Exportações",
+  jobs: "Jobs",
+  organization: "Organização",
+};
+
+const auditActionLabels: Record<string, string> = {
+  "organization.onboarded": "Empresa cadastrada",
+  "calculation.created": "Cálculo registrado",
+  "import.batch_uploaded": "Arquivo importado",
+  "import.validation_requested": "Validação solicitada",
+  "import.processing_requested": "Processamento solicitado",
+  "import.review_closed": "Revisão do lote encerrada",
+  "import.batch_cancelled": "Lote cancelado",
+  "import.mapping_profile_deleted": "Perfil de mapeamento excluído",
+  "calculation_export.requested": "Exportação solicitada",
+  "calculation_export.generated": "Exportação gerada",
+  "background_job.retry_requested": "Nova tentativa solicitada",
+  "background_job.recovered": "Job recuperado após falha",
+};
+
+function OrganizationAudit() {
+  const [category, setCategory] = React.useState<AuditCategory | "">("");
+  const path = `/api/audit-events?limit=30${category ? `&category=${category}` : ""}`;
+  const { data, error, loading } = useApiQuery<AuditEventPage>(path);
+  const [events, setEvents] = React.useState<AuditEventPage["items"]>([]);
+  const [nextCursor, setNextCursor] = React.useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = React.useState(false);
+  const [pageError, setPageError] = React.useState("");
+
+  React.useEffect(() => {
+    if (!data) return;
+    setEvents(data.items);
+    setNextCursor(data.nextCursor);
+  }, [data]);
+
+  async function loadMore() {
+    if (!nextCursor) return;
+    setLoadingMore(true);
+    setPageError("");
+    try {
+      const page = await api<AuditEventPage>(
+        `${path}&cursor=${encodeURIComponent(nextCursor)}`,
+      );
+      setEvents((current) => [...current, ...page.items]);
+      setNextCursor(page.nextCursor);
+    } catch (reason) {
+      setPageError(
+        reason instanceof Error
+          ? reason.message
+          : "Não foi possível carregar mais eventos.",
+      );
+    } finally {
+      setLoadingMore(false);
+    }
+  }
+
+  return (
+    <>
+      <div className="page-heading">
+        <div>
+          <span className="eyebrow">Governança operacional</span>
+          <h1>Trilha de auditoria</h1>
+          <p>Quem fez o quê, quando e sobre qual registro da sua empresa.</p>
+        </div>
+        <label className="audit-filter">
+          <span>Categoria</span>
+          <Select
+            value={category}
+            onChange={(event) => {
+              setCategory(event.target.value as AuditCategory | "");
+              setEvents([]);
+              setNextCursor(null);
+            }}
+          >
+            <option value="">Todas as ações</option>
+            {Object.entries(auditCategoryLabels).map(([value, label]) => (
+              <option value={value} key={value}>{label}</option>
+            ))}
+          </Select>
+        </label>
+      </div>
+      <Panel
+        title="Eventos da organização"
+        subtitle="O conteúdo técnico interno permanece protegido; esta visão expõe apenas a trilha necessária para rastreabilidade."
+      >
+        {error || pageError ? (
+          <Empty text={error || pageError} />
+        ) : loading ? (
+          <Empty text="Carregando auditoria..." />
+        ) : events.length ? (
+          <>
+            <div className="audit-list tenant-audit-list">
+              {events.map((event) => (
+                <div key={event.id}>
+                  <span className="audit-dot" />
+                  <div>
+                    <span className="audit-event-heading">
+                      <strong>{auditActionLabels[event.action] ?? event.action}</strong>
+                      <span className="badge neutral">
+                        {auditCategoryLabels[event.category]}
+                      </span>
+                    </span>
+                    <small>
+                      {event.actor?.name ?? "Sistema"} · {event.entityType} · <code>{event.entityId}</code>
+                    </small>
+                  </div>
+                  <time>{new Date(event.occurredAt).toLocaleString("pt-BR")}</time>
+                </div>
+              ))}
+            </div>
+            {nextCursor && (
+              <div className="ledger-pagination">
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={loadingMore}
+                  onClick={() => void loadMore()}
+                >
+                  {loadingMore ? "Carregando..." : "Carregar eventos anteriores"}
+                </Button>
+              </div>
+            )}
+          </>
+        ) : (
+          <Empty text="Nenhum evento encontrado para este filtro." />
+        )}
+      </Panel>
+    </>
+  );
+}
+
 function Rules({ audit = false }: { audit?: boolean }) {
   const endpoint = audit ? "/api/admin/audit" : "/api/admin/rules";
   const {
@@ -2273,12 +2410,16 @@ function Dashboard({ me }: { me: Me }) {
   const canReviewBatch = permissions.includes("batch:review");
   const canRetryJob = permissions.includes("job:retry");
   const canExport = permissions.includes("export:create");
+  const canReadAudit = permissions.includes("audit:read");
   const nav: { id: Section; label: string; icon: LucideIcon }[] = [
     { id: "overview", label: "Visão geral", icon: LayoutDashboard },
     { id: "history", label: "Histórico", icon: FileClock },
     { id: "imports", label: "Importações", icon: UploadCloud },
     { id: "company", label: "Empresa e equipe", icon: Users },
   ];
+  if (canReadAudit) {
+    nav.push({ id: "activity", label: "Trilha de auditoria", icon: ShieldCheck });
+  }
   if (canCreateCalculation) {
     nav.splice(1, 0, {
       id: "calculate",
@@ -2390,6 +2531,7 @@ function Dashboard({ me }: { me: Me }) {
             />
           )}
           {section === "company" && <Company />}
+          {section === "activity" && <OrganizationAudit />}
           {section === "rules" && <Rules />}
           {section === "audit" && <Rules audit />}
         </div>

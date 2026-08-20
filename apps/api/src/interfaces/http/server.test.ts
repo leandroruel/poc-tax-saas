@@ -308,6 +308,46 @@ describe("HTTP authentication boundary", () => {
     expect(list).not.toHaveBeenCalled();
   });
 
+  it("scopes the operational audit trail to the authenticated organization", async () => {
+    const list = vi.fn().mockResolvedValue({ items: [], nextCursor: null });
+    const server = await buildServer({
+      authenticate: async () => authenticatedActor,
+      auditTrail: { list },
+    });
+    servers.push(server);
+
+    const response = await server.inject({
+      method: "GET",
+      url: "/api/audit-events?limit=15&category=imports",
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(list).toHaveBeenCalledWith({
+      tenantId: authenticatedActor.tenantId,
+      limit: 15,
+      category: "imports",
+      cursor: undefined,
+    });
+  });
+
+  it("rejects malformed audit cursors before querying the ledger", async () => {
+    const list = vi.fn();
+    const server = await buildServer({
+      authenticate: async () => authenticatedActor,
+      auditTrail: { list },
+    });
+    servers.push(server);
+
+    const response = await server.inject({
+      method: "GET",
+      url: "/api/audit-events?cursor=not-a-cursor",
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({ error: "invalid_cursor" });
+    expect(list).not.toHaveBeenCalled();
+  });
+
   it("scopes notifications to both the organization and signed-in user", async () => {
     const notifications = vi.fn().mockResolvedValue({
       items: [],

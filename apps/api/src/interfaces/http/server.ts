@@ -10,6 +10,7 @@ import {
   type CalculateTax,
 } from "../../application/calculate-tax.js";
 import type { AuthenticateRequest } from "../../application/ports/authenticator.js";
+import type { AuditTrail } from "../../application/ports/audit-trail.js";
 import type { CalculationLedger } from "../../application/ports/calculation-ledger.js";
 import type { AuthenticateUser } from "../../application/ports/user-authenticator.js";
 import type { RuleAdministration } from "../../application/ports/rule-administration.js";
@@ -25,6 +26,7 @@ import {
   type OnboardCompany,
 } from "../../application/onboard-company.js";
 import { createPrismaCalculationJournal } from "../../infrastructure/prisma/calculation-journal.js";
+import { createPrismaAuditTrail } from "../../infrastructure/prisma/audit-trail.js";
 import { createPrismaCalculationExportRepository } from "../../infrastructure/prisma/calculation-export-repository.js";
 import { createPrismaCalculationLedger } from "../../infrastructure/prisma/calculation-ledger.js";
 import { prisma } from "../../infrastructure/prisma/prisma-client.js";
@@ -49,10 +51,12 @@ import { registerOperationsRoutes } from "./routes/operations.routes.js";
 import { registerImportBatchRoutes } from "./routes/import-batch.routes.js";
 import { registerTaxRoutes } from "./routes/tax.routes.js";
 import { registerCalculationExportRoutes } from "./routes/calculation-export.routes.js";
+import { registerAuditRoutes } from "./routes/audit.routes.js";
 
 interface ServerDependencies {
   readonly authenticate: AuthenticateRequest;
   readonly authenticateUser: AuthenticateUser;
+  readonly auditTrail: AuditTrail;
   readonly calculationLedger: CalculationLedger;
   readonly calculateTax: CalculateTax;
   readonly calculationExports: CalculationExportWorkflow;
@@ -71,6 +75,7 @@ function createProductionDependencies(
     authenticate: overrides.authenticate ?? authenticateWithBetterAuth,
     authenticateUser:
       overrides.authenticateUser ?? authenticateUserWithBetterAuth,
+    auditTrail: overrides.auditTrail ?? createPrismaAuditTrail(prisma),
     calculationLedger:
       overrides.calculationLedger ?? createPrismaCalculationLedger(prisma),
     calculateTax:
@@ -156,6 +161,11 @@ export async function buildServer(overrides: Partial<ServerDependencies> = {}) {
     app,
     dependencies.authenticate,
     dependencies.calculationExports,
+  );
+  registerAuditRoutes(
+    app,
+    dependencies.authenticate,
+    dependencies.auditTrail,
   );
   registerTaxRoutes(app, dependencies.calculateTax, dependencies.authenticate);
 

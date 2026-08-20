@@ -5,6 +5,7 @@ export type OrganizationPermission =
   | "calculation:create"
   | "company:read"
   | "team:manage"
+  | "audit:read"
   | "batch:read"
   | "batch:create"
   | "batch:review"
@@ -144,6 +145,26 @@ export type Company = {
     createdAt: string;
     user: { id: string; name: string; email: string };
   }[];
+};
+
+export type AuditCategory =
+  | "calculations"
+  | "imports"
+  | "exports"
+  | "jobs"
+  | "organization";
+
+export type AuditEventPage = {
+  items: {
+    id: string;
+    action: string;
+    category: AuditCategory;
+    entityType: string;
+    entityId: string;
+    occurredAt: string;
+    actor: { id: string; name: string } | null;
+  }[];
+  nextCursor: string | null;
 };
 
 export type NotificationFeed = {
