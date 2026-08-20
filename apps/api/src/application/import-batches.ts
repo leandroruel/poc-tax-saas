@@ -57,6 +57,15 @@ export interface ImportBatchReviewPage {
   readonly nextRowNumber: number | null;
 }
 
+export interface ImportMappingProfileView {
+  readonly id: string;
+  readonly name: string;
+  readonly operationType: ImportOperationType;
+  readonly mapping: ImportMapping;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
 export class ImportBatchNotFoundError extends Error {}
 export class ImportBatchConflictError extends Error {}
 export class DuplicateImportFileError extends Error {
@@ -112,6 +121,15 @@ export interface ImportBatchRepository {
     batchId: string;
     reason: string;
   }): Promise<ImportBatchSummary>;
+  listMappingProfiles(input: {
+    tenantId: string;
+    operationType: ImportOperationType;
+  }): Promise<readonly ImportMappingProfileView[]>;
+  deleteMappingProfile(input: {
+    tenantId: string;
+    actorUserId: string;
+    profileId: string;
+  }): Promise<boolean>;
 }
 
 export interface ImportBatchWorkflow {
@@ -158,6 +176,15 @@ export interface ImportBatchWorkflow {
     batchId: string;
     reason: string;
   }): Promise<ImportBatchSummary>;
+  mappingProfiles(input: {
+    tenantId: string;
+    operationType: ImportOperationType;
+  }): Promise<readonly ImportMappingProfileView[]>;
+  deleteMappingProfile(input: {
+    tenantId: string;
+    actorUserId: string;
+    profileId: string;
+  }): Promise<boolean>;
 }
 
 const capabilityBySegment: Partial<Record<TenantSegment, ImportOperationType>> = {
@@ -229,5 +256,8 @@ export function createImportBatchWorkflow(dependencies: {
       }
       return dependencies.repository.cancel({ ...input, reason });
     },
+    mappingProfiles: (input) => dependencies.repository.listMappingProfiles(input),
+    deleteMappingProfile: (input) =>
+      dependencies.repository.deleteMappingProfile(input),
   };
 }

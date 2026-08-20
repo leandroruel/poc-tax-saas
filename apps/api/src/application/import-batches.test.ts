@@ -30,6 +30,8 @@ function repository(): ImportBatchRepository {
     listReviewRows: vi.fn().mockResolvedValue({ items: [], nextRowNumber: null }),
     closeReview: vi.fn().mockResolvedValue({ ...draft, status: "closed" }),
     cancel: vi.fn().mockResolvedValue({ ...draft, status: "cancelled" }),
+    listMappingProfiles: vi.fn().mockResolvedValue([]),
+    deleteMappingProfile: vi.fn().mockResolvedValue(false),
   };
 }
 

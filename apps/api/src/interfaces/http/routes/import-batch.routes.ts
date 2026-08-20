@@ -56,6 +56,9 @@ const closeReviewSchema = z
   })
   .strict();
 const cancelSchema = z.object({ reason: z.string().trim().min(5).max(1_000) }).strict();
+const mappingProfilesSchema = z.object({
+  operationType: z.enum(["credit_pj_principal_defined", "insurance_vgbl"]),
+});
 
 function sendImportError(error: unknown, reply: FastifyReply) {
   if (error instanceof ImportBatchNotFoundError) {
@@ -116,6 +119,45 @@ export function registerImportBatchRoutes(
     if (!parsed.success) return reply.status(400).send({ error: "invalid_request" });
     return workflow.list(actor.tenantId, parsed.data.limit);
   });
+
+  app.get("/api/import-mapping-profiles", async (request, reply) => {
+    const actor = await requireOrganizationPermission(
+      authenticate,
+      request.headers,
+      reply,
+      "batch:create",
+    );
+    if (!actor) return;
+    const parsed = mappingProfilesSchema.safeParse(request.query);
+    if (!parsed.success) {
+      return reply.status(400).send({ error: "invalid_request" });
+    }
+    return workflow.mappingProfiles({
+      tenantId: actor.tenantId,
+      operationType: parsed.data.operationType,
+    });
+  });
+
+  app.delete<{ Params: { profileId: string } }>(
+    "/api/import-mapping-profiles/:profileId",
+    async (request, reply) => {
+      const actor = await requireOrganizationPermission(
+        authenticate,
+        request.headers,
+        reply,
+        "batch:create",
+      );
+      if (!actor) return;
+      const deleted = await workflow.deleteMappingProfile({
+        tenantId: actor.tenantId,
+        actorUserId: actor.userId,
+        profileId: request.params.profileId,
+      });
+      return deleted
+        ? reply.status(204).send()
+        : reply.status(404).send({ error: "mapping_profile_not_found" });
+    },
+  );
 
   app.get<{ Params: { batchId: string } }>(
     "/api/import-batches/:batchId",

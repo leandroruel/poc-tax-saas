@@ -36,6 +36,7 @@ import type {
   BackgroundJob,
   ImportBatch,
   ImportBatchDetail,
+  ImportMappingProfile,
   ImportBatchReviewPage,
   ImportBatchReviewRow,
   Me,
@@ -1071,8 +1072,15 @@ function Imports({
   canReview: boolean;
   canRetry: boolean;
 }) {
+  const importOperationType =
+    segment === "credit_provider"
+      ? "credit_pj_principal_defined"
+      : "insurance_vgbl";
   const batches = useApiQuery<ImportBatch[]>("/api/import-batches?limit=25");
   const jobs = useApiQuery<BackgroundJob[]>("/api/jobs?limit=25");
+  const profiles = useApiQuery<ImportMappingProfile[]>(
+    `/api/import-mapping-profiles?operationType=${importOperationType}`,
+  );
   const [selected, setSelected] = React.useState<ImportBatchDetail | null>(null);
   const [step, setStep] = React.useState(1);
   const [busy, setBusy] = React.useState(false);
@@ -1083,6 +1091,7 @@ function Imports({
   const [reviewNote, setReviewNote] = React.useState("");
   const [acknowledgedInvalidRows, setAcknowledgedInvalidRows] = React.useState(false);
   const [acknowledgedFailedRows, setAcknowledgedFailedRows] = React.useState(false);
+  const [selectedProfileId, setSelectedProfileId] = React.useState("");
 
   const loadReviewRows = React.useCallback(
     async (batchId: string, afterRowNumber?: number) => {
@@ -1154,6 +1163,7 @@ function Imports({
         body: form,
       });
       setSelected({ ...created, mapping: null, rowErrors: [] });
+      setSelectedProfileId("");
       setStep(2);
       await batches.reload();
     } catch (reason) {
@@ -1201,7 +1211,7 @@ function Imports({
       });
       setSelected({ ...selected, status: "validating" });
       setStep(3);
-      await Promise.all([jobs.reload(), batches.reload()]);
+      await Promise.all([jobs.reload(), batches.reload(), profiles.reload()]);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Falha na validação.");
     } finally {
@@ -1286,6 +1296,28 @@ function Imports({
     }
   }
 
+  async function deleteSelectedProfile() {
+    if (!selectedProfileId) return;
+    setBusy(true);
+    setError("");
+    try {
+      await api(
+        `/api/import-mapping-profiles/${encodeURIComponent(selectedProfileId)}`,
+        { method: "DELETE" },
+      );
+      setSelectedProfileId("");
+      await profiles.reload();
+    } catch (reason) {
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : "Falha ao excluir o perfil de mapeamento.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const relatedJobs = jobs.data?.filter(
     (job) => !selected || job.batchId === selected.id,
   );
@@ -1298,6 +1330,20 @@ function Imports({
   const canCancelSelected =
     selected !== null &&
     ["draft", "ready", "requires_review", "failed"].includes(selected.status);
+  const selectedProfile = profiles.data?.find(
+    (profile) => profile.id === selectedProfileId,
+  );
+  const profileColumns = selectedProfile?.mapping.columns as
+    | Readonly<Record<string, string | undefined>>
+    | undefined;
+  const missingProfileColumns = selectedProfile && selected
+    ? Object.values(profileColumns ?? {}).filter(
+        (column): column is string =>
+          typeof column === "string" &&
+          column.length > 0 &&
+          !selected.headers.includes(column),
+      )
+    : [];
   const columnOptions = (optional = false) => (
     <>
       {optional && <option value="">Não importar</option>}
@@ -1316,7 +1362,7 @@ function Imports({
           <p>Valide, calcule e revise operações sem depender de planilhas manuais.</p>
         </div>
         {canCreate && selected && (
-          <Button variant="outline" onClick={() => { setSelected(null); setStep(1); }}>
+          <Button variant="outline" onClick={() => { setSelected(null); setSelectedProfileId(""); setStep(1); }}>
             <UploadCloud size={16} /> Nova importação
           </Button>
         )}
@@ -1341,25 +1387,63 @@ function Imports({
             </form>
           )}
           {step === 2 && selected && (
-            <form className="mapping-grid" onSubmit={validate}>
+            <form
+              key={selectedProfileId || "manual-mapping"}
+              className="mapping-grid"
+              onSubmit={validate}
+            >
               <div className="mapping-summary">
                 <strong>{selected.originalFileName}</strong>
                 <span>{selected.totalRows} linhas · {selected.headers.length} colunas detectadas</span>
               </div>
-              <Field label="Data da operação"><Select name="occurredOn" required>{columnOptions()}</Select></Field>
-              <Field label="Valor"><Select name="amount" required>{columnOptions()}</Select></Field>
+              <div className="mapping-profile-picker">
+                <Field
+                  label="Perfil de mapeamento"
+                  hint="Reaplique um layout salvo ou mantenha o preenchimento manual."
+                >
+                  <Select
+                    value={selectedProfileId}
+                    onChange={(event) => setSelectedProfileId(event.target.value)}
+                  >
+                    <option value="">Mapeamento manual</option>
+                    {profiles.data?.map((profile) => (
+                      <option key={profile.id} value={profile.id}>
+                        {profile.name}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+                {selectedProfile && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={busy}
+                    onClick={() => void deleteSelectedProfile()}
+                  >
+                    Excluir perfil
+                  </Button>
+                )}
+              </div>
+              {profiles.error && <p className="form-error mapping-profile-error">{profiles.error}</p>}
+              {!!missingProfileColumns.length && (
+                <p className="mapping-profile-warning">
+                  Este arquivo não contém: {missingProfileColumns.join(", ")}. Ajuste as colunas antes de validar.
+                </p>
+              )}
+              <Field label="Data da operação"><Select name="occurredOn" defaultValue={profileColumns?.occurredOn} required>{columnOptions()}</Select></Field>
+              <Field label="Valor"><Select name="amount" defaultValue={profileColumns?.amount} required>{columnOptions()}</Select></Field>
               {segment === "credit_provider" ? (
-                <Field label="Prazo em dias"><Select name="termInDays" required>{columnOptions()}</Select></Field>
+                <Field label="Prazo em dias"><Select name="termInDays" defaultValue={profileColumns?.termInDays} required>{columnOptions()}</Select></Field>
               ) : (
                 <>
-                  <Field label="Responsável pelo aporte"><Select name="payer" required>{columnOptions()}</Select></Field>
-                  <Field label="Aportes na mesma seguradora"><Select name="priorSameInsurer">{columnOptions(true)}</Select></Field>
-                  <Field label="Aportes em todas as seguradoras"><Select name="priorAllInsurers">{columnOptions(true)}</Select></Field>
+                  <Field label="Responsável pelo aporte"><Select name="payer" defaultValue={profileColumns?.payer} required>{columnOptions()}</Select></Field>
+                  <Field label="Aportes na mesma seguradora"><Select name="priorSameInsurer" defaultValue={profileColumns?.priorSameInsurer}>{columnOptions(true)}</Select></Field>
+                  <Field label="Aportes em todas as seguradoras"><Select name="priorAllInsurers" defaultValue={profileColumns?.priorAllInsurers}>{columnOptions(true)}</Select></Field>
                 </>
               )}
-              <Field label="Formato da data"><Select name="dateFormat"><option value="dd/mm/yyyy">DD/MM/AAAA</option><option value="yyyy-mm-dd">AAAA-MM-DD</option></Select></Field>
-              <Field label="Formato dos valores"><Select name="numberFormat"><option value="decimal_comma">10.000,50</option><option value="decimal_dot">10,000.50</option></Select></Field>
-              <Field label="Salvar perfil (opcional)"><Input name="profileName" maxLength={80} placeholder="Ex.: Exportação do core bancário" /></Field>
+              <Field label="Formato da data"><Select name="dateFormat" defaultValue={selectedProfile?.mapping.dateFormat ?? "dd/mm/yyyy"}><option value="dd/mm/yyyy">DD/MM/AAAA</option><option value="yyyy-mm-dd">AAAA-MM-DD</option></Select></Field>
+              <Field label="Formato dos valores"><Select name="numberFormat" defaultValue={selectedProfile?.mapping.numberFormat ?? "decimal_comma"}><option value="decimal_comma">10.000,50</option><option value="decimal_dot">10,000.50</option></Select></Field>
+              <Field label={selectedProfile ? "Atualizar perfil" : "Salvar perfil (opcional)"}><Input name="profileName" maxLength={80} defaultValue={selectedProfile?.name} placeholder="Ex.: Exportação do core bancário" /></Field>
               <div className="form-submit"><Button disabled={busy}>{busy ? "Agendando..." : "Validar arquivo"}</Button></div>
             </form>
           )}

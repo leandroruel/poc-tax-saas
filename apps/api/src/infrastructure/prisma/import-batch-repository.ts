@@ -2,6 +2,7 @@ import { Prisma, type PrismaClient } from "@prisma/client";
 import { v7 as uuidv7 } from "uuid";
 import type {
   ImportBatchDetail,
+  ImportMappingProfileView,
   ImportBatchRepository,
   ImportBatchReviewRow,
   ImportBatchSummary,
@@ -422,6 +423,58 @@ export function createPrismaImportBatchRepository(
             where: { id: batch.id },
           }),
         );
+      });
+    },
+    async listMappingProfiles(input) {
+      const profiles = await prisma.importMappingProfile.findMany({
+        where: {
+          organizationId: input.tenantId,
+          operationType: input.operationType,
+        },
+        orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
+      });
+      return profiles.map((profile) => {
+        const mapping = mappingOf(profile.mapping);
+        if (!mapping) {
+          throw new Error(`Invalid mapping profile payload: ${profile.id}`);
+        }
+        return {
+          id: profile.id,
+          name: profile.name,
+          operationType:
+            profile.operationType as ImportMappingProfileView["operationType"],
+          mapping,
+          createdAt: profile.createdAt.toISOString(),
+          updatedAt: profile.updatedAt.toISOString(),
+        };
+      });
+    },
+    async deleteMappingProfile(input) {
+      return prisma.$transaction(async (transaction) => {
+        const profile = await transaction.importMappingProfile.findFirst({
+          where: { id: input.profileId, organizationId: input.tenantId },
+        });
+        if (!profile) return false;
+        const deleted = await transaction.importMappingProfile.deleteMany({
+          where: { id: profile.id, organizationId: input.tenantId },
+        });
+        if (deleted.count !== 1) return false;
+        await transaction.auditLog.create({
+          data: {
+            id: uuidv7(),
+            actorUserId: input.actorUserId,
+            organizationId: input.tenantId,
+            action: "import.mapping_profile_deleted",
+            entityType: "ImportMappingProfile",
+            entityId: profile.id,
+            before: requiredJson({
+              name: profile.name,
+              operationType: profile.operationType,
+              mapping: profile.mapping,
+            }),
+          },
+        });
+        return true;
       });
     },
   };

@@ -152,6 +152,35 @@ export type ImportBatch = {
   updatedAt: string;
 };
 
+export type ImportMapping =
+  | {
+      operationType: "credit_pj_principal_defined";
+      dateFormat: "yyyy-mm-dd" | "dd/mm/yyyy";
+      numberFormat: "decimal_dot" | "decimal_comma";
+      columns: { occurredOn: string; amount: string; termInDays: string };
+    }
+  | {
+      operationType: "insurance_vgbl";
+      dateFormat: "yyyy-mm-dd" | "dd/mm/yyyy";
+      numberFormat: "decimal_dot" | "decimal_comma";
+      columns: {
+        occurredOn: string;
+        amount: string;
+        payer: string;
+        priorSameInsurer?: string;
+        priorAllInsurers?: string;
+      };
+    };
+
+export type ImportMappingProfile = {
+  id: string;
+  name: string;
+  operationType: CalculationOperationType;
+  mapping: ImportMapping;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type ImportBatchDetail = ImportBatch & {
   mapping: unknown;
   rowErrors: {

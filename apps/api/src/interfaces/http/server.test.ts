@@ -34,6 +34,8 @@ function importBatchWorkflow(
     reviewRows: vi.fn().mockResolvedValue({ items: [], nextRowNumber: null }),
     closeReview: vi.fn(),
     cancel: vi.fn(),
+    mappingProfiles: vi.fn().mockResolvedValue([]),
+    deleteMappingProfile: vi.fn().mockResolvedValue(false),
     ...overrides,
   };
 }
@@ -511,6 +513,47 @@ describe("HTTP authentication boundary", () => {
 
     expect(response.statusCode).toBe(403);
     expect(closeReview).not.toHaveBeenCalled();
+  });
+
+  it("lists mapping profiles only inside the authenticated organization", async () => {
+    const mappingProfiles = vi.fn().mockResolvedValue([]);
+    const server = await buildServer({
+      authenticate: async () => authenticatedActor,
+      importBatches: importBatchWorkflow({ mappingProfiles }),
+    });
+    servers.push(server);
+
+    const response = await server.inject({
+      method: "GET",
+      url: "/api/import-mapping-profiles?operationType=credit_pj_principal_defined",
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(mappingProfiles).toHaveBeenCalledWith({
+      tenantId: authenticatedActor.tenantId,
+      operationType: "credit_pj_principal_defined",
+    });
+  });
+
+  it("deletes a mapping profile through the authenticated organization scope", async () => {
+    const deleteMappingProfile = vi.fn().mockResolvedValue(true);
+    const server = await buildServer({
+      authenticate: async () => authenticatedActor,
+      importBatches: importBatchWorkflow({ deleteMappingProfile }),
+    });
+    servers.push(server);
+
+    const response = await server.inject({
+      method: "DELETE",
+      url: "/api/import-mapping-profiles/profile_01",
+    });
+
+    expect(response.statusCode).toBe(204);
+    expect(deleteMappingProfile).toHaveBeenCalledWith({
+      tenantId: authenticatedActor.tenantId,
+      actorUserId: authenticatedActor.userId,
+      profileId: "profile_01",
+    });
   });
 
   it("requests calculation exports within the authenticated organization", async () => {

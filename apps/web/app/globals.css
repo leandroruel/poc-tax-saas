@@ -1021,6 +1021,28 @@ td small {
   background: #f4f8f6;
 }
 .mapping-summary span { color: var(--muted); font-size: 11px; }
+.mapping-profile-picker {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid #d9e5e0;
+  border-radius: 10px;
+  background: #f8fcfa;
+}
+.mapping-profile-picker button { margin-bottom: 2px; }
+.mapping-profile-error,
+.mapping-profile-warning { grid-column: 1 / -1; }
+.mapping-profile-warning {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  color: #7b5b31;
+  background: #fff8f0;
+  font-size: 11px;
+}
 .import-progress-view { display: grid; gap: 18px; }
 .job-progress {
   height: 7px;
@@ -1341,6 +1363,7 @@ td small {
     align-items: stretch;
     flex-direction: column;
   }
+  .mapping-profile-picker { grid-template-columns: 1fr; }
   .metric-grid {
     grid-template-columns: 1fr;
   }

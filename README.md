@@ -69,6 +69,7 @@ aplicação, sem depender de um provedor de nuvem.
 - Jobs, tentativas e notificações possuem escopo por organização. O sino do dashboard consulta somente notificações do usuário autenticado.
 - Arquivos de importação e exportação usam uma porta S3; localmente ela aponta para o Silo e pode ser trocada por outro storage compatível sem alterar o domínio.
 - A importação CSV usa um assistente de quatro etapas: upload, mapeamento de colunas, validação e cálculo em chunks. Arquivos idênticos são deduplicados por tenant e hash.
+- Perfis de mapeamento pertencem à organização e podem ser reaplicados, atualizados pelo mesmo nome ou excluídos com registro de auditoria.
 - Cada linha válida reutiliza o mesmo caso de uso do cálculo individual. O vínculo linha↔cálculo é atômico, permitindo retomada sem duplicar registros.
 - Um lote processado termina em revisão: linhas inválidas e falhas são paginadas para o revisor, falhas podem ser reprocessadas e o encerramento exige reconhecimento explícito das pendências e uma nota auditável.
 - Lotes não podem ser cancelados enquanto validação ou cálculo ainda escrevem resultados. Fora desses estados, o cancelamento preserva o arquivo e a justificativa na trilha de auditoria.
