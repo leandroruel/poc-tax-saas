@@ -1,138 +1,126 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { CalculateTax } from "../../../application/calculate-tax.js";
-import { isMoneyNumber, moneyFromNumber } from "../../../domain/money.js";
-import type { TaxOperation } from "../../../domain/operation.js";
+import type { AuthenticateRequest } from "../../../application/ports/authenticator.js";
+import type { IofOperation } from "../../../domain/iof/operation.js";
+import { isLocalDate } from "../../../domain/iof/operation.js";
+import {
+  isMoneyNumber,
+  moneyFromNumber,
+} from "../../../domain/shared/money.js";
 import { presentCalculation } from "../tax-presenter.js";
 
-const localDateSchema = z
-  .string()
-  .regex(/^\d{4}-\d{2}-\d{2}$/)
-  .refine((value) => !Number.isNaN(new Date(`${value}T00:00:00.000Z`).getTime()), "invalid date");
-
+const localDateSchema = z.string().refine(isLocalDate, "data inválida");
 const moneySchema = z
   .number()
   .positive()
   .finite()
   .safe()
-  .refine(isMoneyNumber, "must have at most two decimal places");
-
+  .refine(isMoneyNumber, "use no máximo 2 casas decimais");
 const nonNegativeMoneySchema = z
   .number()
   .nonnegative()
   .finite()
   .safe()
-  .refine(isMoneyNumber, "must have at most two decimal places");
+  .refine(isMoneyNumber, "use no máximo 2 casas decimais");
 
-const partySchema = z.object({
-  personType: z.enum(["PF", "PJ"]),
-  category: z.literal("simples_mei").optional(),
-});
-
-const operationBase = {
-  date: localDateSchema,
-  baseAmount: moneySchema,
-};
-
-const operationSchema = z.discriminatedUnion("type", [
-  z.object({
-    ...operationBase,
-    type: z.literal("credit"),
-    borrower: partySchema,
-    termInDays: z.number().int().positive(),
-    optedIntoSimples: z.boolean().default(false),
-  }),
-  z.object({
-    ...operationBase,
-    type: z.literal("insurance"),
-    product: z.enum(["vgbl", "life_survival"]),
-    insured: partySchema,
-    payer: z.enum(["policyholder", "employer"]),
-    priorContributions: z
-      .object({
-        sameInsurer: nonNegativeMoneySchema.optional(),
-        allInsurers: nonNegativeMoneySchema.optional(),
-      })
-      .default({}),
-  }),
-  z.object({
-    ...operationBase,
-    type: z.literal("foreign_exchange"),
-    direction: z.enum(["outflow", "inflow", "investment"]),
-  }),
-  z.object({
-    ...operationBase,
-    type: z.literal("investment"),
-    instrument: z.literal("fidc"),
-    market: z.enum(["primary", "secondary"]),
-  }),
+const operationSchema = z.discriminatedUnion("kind", [
+  z
+    .object({
+      kind: z.literal("credit"),
+      modality: z.literal("principal_defined"),
+      occurredOn: localDateSchema,
+      amount: moneySchema,
+      borrower: z.object({ personType: z.literal("PJ") }).strict(),
+      termInDays: z.number().int().positive().safe(),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("vgbl"),
+      occurredOn: localDateSchema,
+      amount: moneySchema,
+      insured: z.object({ personType: z.literal("PF") }).strict(),
+      payer: z.enum(["policyholder", "employer"]),
+      priorContributions: z
+        .object({
+          sameInsurer: nonNegativeMoneySchema.optional(),
+          allInsurers: nonNegativeMoneySchema.optional(),
+        })
+        .strict()
+        .default({}),
+    })
+    .strict(),
 ]);
 
-const requestSchema = z.object({
-  tenantId: z.string().min(1),
-  asOfDate: localDateSchema,
-  taxType: z.literal("IOF").default("IOF"),
-  operation: operationSchema,
-});
+const requestSchema = z
+  .object({
+    operation: operationSchema,
+    recalculatesId: z.uuid().optional(),
+  })
+  .strict();
 
-function toDomainOperation(operation: z.infer<typeof operationSchema>): TaxOperation {
-  const base = { occurredOn: operation.date, amount: moneyFromNumber(operation.baseAmount) };
-  if (operation.type === "credit") {
-    return {
-      ...base,
-      kind: "credit",
-      borrower: operation.borrower,
-      termInDays: operation.termInDays,
-      optedIntoSimples: operation.optedIntoSimples,
-    };
-  }
-  if (operation.type === "insurance") {
-    return {
-      ...base,
-      kind: "insurance",
-      product: operation.product,
-      insured: operation.insured,
-      payer: operation.payer,
-      priorContributions: {
-        sameInsurer:
-          operation.priorContributions.sameInsurer === undefined
-            ? undefined
-            : moneyFromNumber(operation.priorContributions.sameInsurer),
-        allInsurers:
-          operation.priorContributions.allInsurers === undefined
-            ? undefined
-            : moneyFromNumber(operation.priorContributions.allInsurers),
-      },
-    };
-  }
-  if (operation.type === "foreign_exchange") {
-    return { ...base, kind: "foreign_exchange", direction: operation.direction };
-  }
-  return { ...base, kind: "investment", instrument: operation.instrument, market: operation.market };
+function toDomainOperation(
+  operation: z.infer<typeof operationSchema>,
+): IofOperation {
+  const base = {
+    occurredOn: operation.occurredOn,
+    amount: moneyFromNumber(operation.amount),
+  };
+  if (operation.kind === "credit") return { ...operation, ...base };
+  return {
+    ...operation,
+    ...base,
+    priorContributions: {
+      sameInsurer:
+        operation.priorContributions.sameInsurer === undefined
+          ? undefined
+          : moneyFromNumber(operation.priorContributions.sameInsurer),
+      allInsurers:
+        operation.priorContributions.allInsurers === undefined
+          ? undefined
+          : moneyFromNumber(operation.priorContributions.allInsurers),
+    },
+  };
 }
 
-function httpStatus(kind: Awaited<ReturnType<CalculateTax>>["outcome"]["kind"]): number {
-  if (kind === "calculated" || kind === "calculated_with_warning" || kind === "not_applicable") return 200;
-  if (kind === "unclassified") return 400;
-  if (kind === "ambiguous_rule") return 500;
-  return 422;
-}
-
-export function registerTaxRoutes(app: FastifyInstance, calculateTax: CalculateTax) {
+export function registerTaxRoutes(
+  app: FastifyInstance,
+  calculateTax: CalculateTax,
+  authenticate: AuthenticateRequest,
+) {
   app.post("/tax/calculate", async (request, reply) => {
+    const actor = await authenticate(request.headers);
+    if (actor === null)
+      return reply.status(401).send({ error: "unauthenticated" });
+
     const parsed = requestSchema.safeParse(request.body);
     if (!parsed.success) {
-      return reply.status(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+      return reply
+        .status(400)
+        .send({
+          error: "invalid_request",
+          details: z.flattenError(parsed.error),
+        });
     }
 
     const response = await calculateTax({
-      tenantId: parsed.data.tenantId,
-      taxType: parsed.data.taxType,
-      asOf: parsed.data.asOfDate,
+      actorUserId: actor.userId,
+      tenant: { id: actor.tenantId, segment: actor.segment },
       operation: toDomainOperation(parsed.data.operation),
+      recalculatesId: parsed.data.recalculatesId,
     });
+    const status =
+      response.outcome.kind === "ambiguous_rule"
+        ? 409
+        : response.outcome.kind === "unsupported"
+          ? 403
+        : response.outcome.kind === "calculated" ||
+            response.outcome.kind === "not_applicable"
+          ? 200
+          : 422;
     return reply
-      .status(httpStatus(response.outcome.kind))
+      .status(status)
       .send(presentCalculation(response.calculationId, response.outcome));
   });
 }

@@ -7,76 +7,222 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-enum RuleStatus {
-  in_force
-  contested
-  needs_review
+enum TenantSegment {
+  credit_provider
+  insurance_pension
 }
 
-model Tenant {
-  id        String           @id @default(cuid())
+enum PlatformRole {
+  user
+  super_admin
+}
+
+enum RuleEditorialStatus {
+  draft
+  pending_review
+  approved
+  rejected
+  revoked
+}
+
+model User {
+  id            String       @id
+  name          String
+  email         String       @unique
+  emailVerified Boolean      @default(false)
+  image         String?
+  platformRole  PlatformRole @default(user)
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  sessions        Session[]
+  accounts        Account[]
+  membership      Member?
+  invitationsSent Invitation[]     @relation("InvitationInviter")
+  profile         UserProfile?
+  calculations    Calculation[]
+  rulesCreated    TaxRuleVersion[] @relation("RuleCreatedBy")
+  rulesReviewed   TaxRuleVersion[] @relation("RuleReviewedBy")
+  auditEvents     AuditLog[]       @relation("AuditActor")
+}
+
+model Session {
+  id                   String   @id
+  expiresAt            DateTime
+  token                String   @unique
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+  ipAddress            String?
+  userAgent            String?
+  userId               String
+  activeOrganizationId String?  @db.Uuid
+  user                 User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([activeOrganizationId])
+}
+
+model Account {
+  id                    String    @id
+  issuer                String
+  accountId             String
+  providerId            String
+  userId                String
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([issuer, accountId])
+  @@index([userId])
+}
+
+model Verification {
+  id         String   @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
+}
+
+model Organization {
+  id        String        @id @db.Uuid
   name      String
-  config    Json
-  createdAt DateTime         @default(now())
-  contexts  TenantContext[]
-  operations Operation[]
+  slug      String        @unique
+  logo      String?
+  metadata  String?
+  taxId     String        @unique
+  segment   TenantSegment
+  createdAt DateTime      @default(now())
+
+  members      Member[]
+  invitations  Invitation[]
+  calculations Calculation[]
+  auditEvents  AuditLog[]
+}
+
+model Member {
+  id             String       @id
+  organizationId String       @db.Uuid
+  userId         String       @unique
+  role           String
+  createdAt      DateTime     @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+}
+
+model Invitation {
+  id             String       @id
+  organizationId String       @db.Uuid
+  email          String
+  role           String?
+  status         String
+  expiresAt      DateTime
+  inviterId      String
+  createdAt      DateTime     @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  inviter        User         @relation("InvitationInviter", fields: [inviterId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([email])
+}
+
+model UserProfile {
+  userId          String   @id
+  taxIdCiphertext String
+  taxIdIv         String
+  taxIdAuthTag    String
+  taxIdBlindIndex String   @unique
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model TaxRule {
-  id                  String      @id @default(cuid())
-  taxType             String
-  operationType       String
-  effectiveFrom       DateTime
-  effectiveTo         DateTime?
-  version             Int
-  rate                Decimal
-  rateUnit            String
-  additionalRate      Decimal?
-  additionalRateUnit  String?
-  baseRule            String
-  legalBasis          String
-  conditions          Json
-  basePolicy          Json
-  status              RuleStatus  @default(needs_review)
-  createdBy           String?
-  reviewedBy          String?
-  createdAt           DateTime    @default(now())
+  id            String           @id
+  code          String           @unique
+  taxType       String           @default("IOF")
+  operationType String
+  versions      TaxRuleVersion[]
+  createdAt     DateTime         @default(now())
 
-  @@index([taxType, operationType, effectiveFrom, effectiveTo])
-  @@unique([taxType, operationType, version])
+  @@index([taxType, operationType])
 }
 
-model TenantContext {
-  id        String   @id @default(cuid())
-  tenantId  String
-  tenant    Tenant   @relation(fields: [tenantId], references: [id])
-  exceptions Json
-  regimes   Json
-  state     String?
-  createdAt DateTime @default(now())
+model TaxRuleVersion {
+  id              String              @id
+  ruleId          String
+  version         Int
+  editorialStatus RuleEditorialStatus @default(draft)
+  effectiveFrom   DateTime            @db.Date
+  effectiveTo     DateTime?           @db.Date
+  treatment       Json
+  legalBasis      String
+  sourceUrl       String
+  changeReason    String
+  snapshotHash    String
+  createdById     String
+  reviewedById    String?
+  approvedAt      DateTime?
+  createdAt       DateTime            @default(now())
+  rule            TaxRule             @relation(fields: [ruleId], references: [id], onDelete: Restrict)
+  createdBy       User                @relation("RuleCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  reviewedBy      User?               @relation("RuleReviewedBy", fields: [reviewedById], references: [id], onDelete: Restrict)
+  calculations    Calculation[]
 
-  @@index([tenantId])
-}
-
-model Operation {
-  id             String        @id @default(cuid())
-  tenantId       String
-  tenant         Tenant        @relation(fields: [tenantId], references: [id])
-  payload        Json
-  classifiedType String?
-  createdAt      DateTime      @default(now())
-  calculations   Calculation[]
-
-  @@index([tenantId])
+  @@unique([ruleId, version])
+  @@index([editorialStatus, effectiveFrom, effectiveTo])
 }
 
 model Calculation {
-  id        String    @id @default(cuid())
-  operationId String
-  operation  Operation @relation(fields: [operationId], references: [id])
-  asOfDate  DateTime
-  outcome   Json
-  createdAt DateTime  @default(now())
+  id             String          @id
+  organizationId String          @db.Uuid
+  createdById    String
+  operationType  String
+  occurredOn     DateTime        @db.Date
+  input          Json
+  outcome        Json
+  ruleVersionId  String?
+  ruleSnapshot   Json?
+  recalculatesId String?
+  createdAt      DateTime        @default(now())
+  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  createdBy      User            @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  ruleVersion    TaxRuleVersion? @relation(fields: [ruleVersionId], references: [id], onDelete: Restrict)
+  recalculates   Calculation?    @relation("CalculationRevision", fields: [recalculatesId], references: [id], onDelete: Restrict)
+  recalculations Calculation[]   @relation("CalculationRevision")
 
-  @@index([operationId])
+  @@index([organizationId, createdAt])
+  @@index([createdById])
+  @@index([ruleVersionId])
+}
+
+model AuditLog {
+  id             String        @id
+  actorUserId    String?
+  organizationId String?       @db.Uuid
+  action         String
+  entityType     String
+  entityId       String
+  before         Json?
+  after          Json?
+  metadata       Json?
+  occurredAt     DateTime      @default(now())
+  actor          User?         @relation("AuditActor", fields: [actorUserId], references: [id], onDelete: Restrict)
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+
+  @@index([entityType, entityId, occurredAt])
+  @@index([organizationId, occurredAt])
+  @@index([actorUserId, occurredAt])
 }
