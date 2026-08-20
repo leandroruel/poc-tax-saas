@@ -683,7 +683,35 @@ function organizationRoleLabel(role: OrganizationRole): string {
   return labels[role];
 }
 
-function CalculationRows({ rows }: { rows: readonly CalculationRecord[] }) {
+function operationForRequest(input: CalculationRecord["input"]) {
+  if (input.kind === "credit") {
+    return { ...input, amount: Number(input.amount) };
+  }
+  return {
+    ...input,
+    amount: Number(input.amount),
+    priorContributions: {
+      sameInsurer:
+        input.priorContributions.sameInsurer === undefined
+          ? undefined
+          : Number(input.priorContributions.sameInsurer),
+      allInsurers:
+        input.priorContributions.allInsurers === undefined
+          ? undefined
+          : Number(input.priorContributions.allInsurers),
+    },
+  };
+}
+
+function CalculationRows({
+  rows,
+  onSelect,
+  selectedId,
+}: {
+  rows: readonly CalculationRecord[];
+  onSelect?: (calculationId: string) => void;
+  selectedId?: string;
+}) {
   return (
     <div className="table-wrap">
       <table>
@@ -693,6 +721,7 @@ function CalculationRows({ rows }: { rows: readonly CalculationRecord[] }) {
             <th>Data</th>
             <th>Status</th>
             <th>IOF</th>
+            {onSelect && <th><span className="sr-only">Ações</span></th>}
           </tr>
         </thead>
         <tbody>
@@ -721,11 +750,132 @@ function CalculationRows({ rows }: { rows: readonly CalculationRecord[] }) {
                   ? money(Number(row.outcome.result.amount))
                   : "—"}
               </td>
+              {onSelect && (
+                <td>
+                  <button
+                    type="button"
+                    className="calculation-detail-trigger"
+                    aria-pressed={selectedId === row.id}
+                    onClick={() => onSelect(row.id)}
+                  >
+                    {selectedId === row.id ? "Ocultar" : "Ver memória"}
+                  </button>
+                </td>
+              )}
             </tr>
           ))}
         </tbody>
       </table>
     </div>
+  );
+}
+
+function CalculationDetail({
+  calculation,
+  canRecalculate,
+  busy,
+  onRecalculate,
+}: {
+  calculation: CalculationRecord;
+  canRecalculate: boolean;
+  busy: boolean;
+  onRecalculate: () => void;
+}) {
+  const input = calculation.input;
+  const result =
+    calculation.outcome.kind === "calculated"
+      ? calculation.outcome.result
+      : null;
+  return (
+    <section className="calculation-detail" aria-labelledby="calculation-detail-title">
+      <header>
+        <div>
+          <span className="eyebrow">Memória imutável</span>
+          <h3 id="calculation-detail-title">Cálculo {calculation.id}</h3>
+          <p>
+            Registrado por {calculation.createdBy.name} em {new Date(calculation.createdAt).toLocaleString("pt-BR")}.
+          </p>
+        </div>
+        <span className={`badge ${calculation.outcome.kind}`}>
+          {calculationStatusLabels[calculation.outcome.kind]}
+        </span>
+      </header>
+      <div className="calculation-detail-grid">
+        <div>
+          <span>Operação</span>
+          <strong>{input.kind === "credit" ? "Crédito PJ" : "VGBL"}</strong>
+        </div>
+        <div>
+          <span>Data da operação</span>
+          <strong>{new Date(`${input.occurredOn}T12:00:00`).toLocaleDateString("pt-BR")}</strong>
+        </div>
+        <div>
+          <span>Valor informado</span>
+          <strong>{money(Number(input.amount))}</strong>
+        </div>
+        {input.kind === "credit" ? (
+          <div>
+            <span>Prazo</span>
+            <strong>{input.termInDays} dias</strong>
+          </div>
+        ) : (
+          <>
+            <div>
+              <span>Pagador</span>
+              <strong>{input.payer === "employer" ? "Empregador" : "Titular"}</strong>
+            </div>
+            <div>
+              <span>Aportes · mesma seguradora</span>
+              <strong>{money(Number(input.priorContributions.sameInsurer ?? 0))}</strong>
+            </div>
+            <div>
+              <span>Aportes · todas</span>
+              <strong>{money(Number(input.priorContributions.allInsurers ?? 0))}</strong>
+            </div>
+          </>
+        )}
+      </div>
+      {result && (
+        <div className="calculation-result-detail">
+          <div><span>IOF apurado</span><strong>{money(Number(result.amount))}</strong></div>
+          <div><span>Base tributável</span><strong>{money(Number(result.taxableBase))}</strong></div>
+          <div><span>Base bruta</span><strong>{money(Number(result.grossBase))}</strong></div>
+          <div><span>Versão aplicada</span><strong>v{result.ruleVersion}</strong></div>
+        </div>
+      )}
+      {calculation.ruleSnapshot && (
+        <div className="rule-evidence">
+          <div>
+            <strong>Regra preservada no cálculo</strong>
+            <small>
+              Vigência {calculation.ruleSnapshot.effectiveFrom} → {calculation.ruleSnapshot.effectiveTo ?? "aberta"}
+            </small>
+          </div>
+          <p>{calculation.ruleSnapshot.legalBasis}</p>
+          {calculation.ruleSnapshot.sourceUrl && (
+            <a href={calculation.ruleSnapshot.sourceUrl} target="_blank" rel="noreferrer">
+              Consultar fonte oficial
+            </a>
+          )}
+          {!!result?.evidence.length && (
+            <ul>{result.evidence.map((item) => <li key={item}>{item}</li>)}</ul>
+          )}
+        </div>
+      )}
+      {calculation.recalculatesId && (
+        <p className="calculation-lineage">
+          Este registro recalcula <code>{calculation.recalculatesId}</code> sem substituir o original.
+        </p>
+      )}
+      {canRecalculate && (
+        <div className="calculation-detail-actions">
+          <Button type="button" variant="outline" disabled={busy} onClick={onRecalculate}>
+            <RotateCcw size={15} /> {busy ? "Recalculando..." : "Recalcular e vincular"}
+          </Button>
+          <small>Cria um novo registro usando a regra aprovada para a data original.</small>
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -911,15 +1061,25 @@ const calculationStatusLabels: Record<CalculationStatus, string> = {
   ambiguous_rule: "Regra ambígua",
 };
 
-function History({ canExport }: { canExport: boolean }) {
+function History({
+  canExport,
+  canRecalculate,
+}: {
+  canExport: boolean;
+  canRecalculate: boolean;
+}) {
   const [path, setPath] = React.useState("/api/calculations?limit=25");
-  const { data, error, loading } = useApiQuery<CalculationPage>(path);
+  const { data, error, loading, reload } = useApiQuery<CalculationPage>(path);
   const [rows, setRows] = React.useState<CalculationRecord[]>([]);
   const [nextCursor, setNextCursor] = React.useState<string | null>(null);
   const [loadingMore, setLoadingMore] = React.useState(false);
   const [pageError, setPageError] = React.useState("");
   const [activeFilters, setActiveFilters] =
     React.useState<CalculationExportFilters>({});
+  const [selectedCalculation, setSelectedCalculation] =
+    React.useState<CalculationRecord | null>(null);
+  const [detailLoading, setDetailLoading] = React.useState(false);
+  const [recalculating, setRecalculating] = React.useState(false);
 
   React.useEffect(() => {
     if (!data) return;
@@ -972,6 +1132,54 @@ function History({ canExport }: { canExport: boolean }) {
       );
     } finally {
       setLoadingMore(false);
+    }
+  }
+
+  async function inspectCalculation(calculationId: string) {
+    if (selectedCalculation?.id === calculationId) {
+      setSelectedCalculation(null);
+      return;
+    }
+    setDetailLoading(true);
+    setPageError("");
+    try {
+      setSelectedCalculation(
+        await api<CalculationRecord>(`/api/calculations/${calculationId}`),
+      );
+    } catch (reason) {
+      setPageError(
+        reason instanceof Error
+          ? reason.message
+          : "Não foi possível carregar a memória do cálculo.",
+      );
+    } finally {
+      setDetailLoading(false);
+    }
+  }
+
+  async function recalculateSelected() {
+    if (!selectedCalculation) return;
+    setRecalculating(true);
+    setPageError("");
+    try {
+      const created = await api<{ calculationId: string }>("/tax/calculate", {
+        method: "POST",
+        body: JSON.stringify({
+          operation: operationForRequest(selectedCalculation.input),
+          recalculatesId: selectedCalculation.id,
+        }),
+      });
+      const next = await api<CalculationRecord>(
+        `/api/calculations/${created.calculationId}`,
+      );
+      setSelectedCalculation(next);
+      await reload();
+    } catch (reason) {
+      setPageError(
+        reason instanceof Error ? reason.message : "Falha ao recalcular a operação.",
+      );
+    } finally {
+      setRecalculating(false);
     }
   }
 
@@ -1028,7 +1236,11 @@ function History({ canExport }: { canExport: boolean }) {
           <Empty text="Carregando histórico..." />
         ) : rows.length ? (
           <>
-            <CalculationRows rows={rows} />
+            <CalculationRows
+              rows={rows}
+              selectedId={selectedCalculation?.id}
+              onSelect={(calculationId) => void inspectCalculation(calculationId)}
+            />
             {nextCursor && (
               <div className="ledger-pagination">
                 <Button
@@ -1040,6 +1252,19 @@ function History({ canExport }: { canExport: boolean }) {
                   {loadingMore ? "Carregando..." : "Carregar mais"}
                 </Button>
               </div>
+            )}
+            {detailLoading && <Empty text="Carregando memória do cálculo..." />}
+            {selectedCalculation && !detailLoading && (
+              <CalculationDetail
+                calculation={selectedCalculation}
+                canRecalculate={
+                  canRecalculate &&
+                  (selectedCalculation.outcome.kind === "calculated" ||
+                    selectedCalculation.outcome.kind === "not_applicable")
+                }
+                busy={recalculating}
+                onRecalculate={() => void recalculateSelected()}
+              />
             )}
           </>
         ) : (
@@ -2150,7 +2375,12 @@ function Dashboard({ me }: { me: Me }) {
           {section === "calculate" && (
             <Calculate segment={organization.segment} />
           )}
-          {section === "history" && <History canExport={canExport} />}
+          {section === "history" && (
+            <History
+              canExport={canExport}
+              canRecalculate={canCreateCalculation}
+            />
+          )}
           {section === "imports" && (
             <Imports
               segment={organization.segment}

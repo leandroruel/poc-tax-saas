@@ -902,6 +902,47 @@ td small {
   color: var(--muted);
   font-size: 10px;
 }
+.calculation-detail-trigger {
+  border: 0;
+  color: var(--green);
+  background: transparent;
+  font-size: 10px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+.calculation-detail-trigger:hover { text-decoration: underline; }
+.calculation-detail {
+  display: grid;
+  gap: 18px;
+  margin: 18px 0 4px;
+  padding: 20px;
+  border: 1px solid #cfe0d8;
+  border-radius: 12px;
+  background: #f8fcfa;
+  animation: review-enter 220ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.calculation-detail > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+.calculation-detail h3 { margin: 3px 0 5px; overflow-wrap: anywhere; font-size: 18px; }
+.calculation-detail header p { margin: 0; color: var(--muted); font-size: 11px; }
+.calculation-detail-grid,
+.calculation-result-detail { display: grid; grid-template-columns: repeat(4, 1fr); gap: 9px; }
+.calculation-detail-grid > div,
+.calculation-result-detail > div { display: grid; gap: 4px; padding: 12px; border: 1px solid var(--line); border-radius: 9px; background: #fff; }
+.calculation-detail-grid span,
+.calculation-result-detail span { color: var(--muted); font-size: 9px; text-transform: uppercase; }
+.calculation-detail-grid strong,
+.calculation-result-detail strong { font-size: 12px; }
+.calculation-result-detail > div:first-child strong { color: var(--green-dark); font-size: 20px; }
+.rule-evidence { display: grid; gap: 9px; padding: 14px; border-left: 3px solid var(--green); border-radius: 4px 9px 9px 4px; background: #fff; }
+.rule-evidence > div { display: grid; }
+.rule-evidence small { color: var(--muted); font-size: 10px; }
+.rule-evidence p { margin: 0; font-size: 12px; line-height: 1.5; }
+.rule-evidence a { width: fit-content; color: var(--green); font-size: 11px; font-weight: 800; }
+.rule-evidence ul { margin: 0; padding-left: 18px; color: #52605b; font-size: 10px; }
+.calculation-lineage { margin: 0; color: #52605b; font-size: 11px; }
+.calculation-lineage code { overflow-wrap: anywhere; }
+.calculation-detail-actions { display: flex; align-items: center; gap: 12px; }
+.calculation-detail-actions small { color: var(--muted); font-size: 10px; }
 .badge {
   display: inline-flex;
   padding: 4px 7px;
@@ -1341,7 +1382,9 @@ td small {
   .calculate-grid,
   .ledger-filters,
   .mapping-grid,
-  .imports-grid {
+  .imports-grid,
+  .calculation-detail-grid,
+  .calculation-result-detail {
     grid-template-columns: 1fr;
   }
   .export-format-grid,
@@ -1373,7 +1416,9 @@ td small {
     flex-direction: column;
   }
   .batch-review-heading,
-  .review-actions {
+  .review-actions,
+  .calculation-detail > header,
+  .calculation-detail-actions {
     align-items: stretch;
     flex-direction: column;
   }

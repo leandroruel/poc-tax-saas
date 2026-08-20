@@ -62,6 +62,7 @@ aplicação, sem depender de um provedor de nuvem.
 - CPF reside em `UserProfile`, protegido por AES-256-GCM e índice cego HMAC-SHA256. A API não devolve CPF.
 - Cálculos e logs de auditoria são append-only; um recálculo cria novo registro relacionado e só pode apontar para um cálculo do mesmo tenant.
 - O ledger de cálculos usa cursor estável, filtros validados e escopo obrigatório por organização.
+- A memória de cada cálculo reúne entrada original, resultado, evidências e snapshot da regra. O recálculo parte dessa memória e cria uma revisão vinculada sem sobrescrever o registro anterior.
 - Papéis organizacionais são `owner`, `admin`, `operator` e `reviewer`; permissões são verificadas no servidor, não apenas escondidas na interface.
 - Somente `super_admin` administra regras globais. Tenants não alteram fórmulas.
 - A vigência é escolhida por `operation.occurredOn`, não pela data atual nem por uma data livre de consulta.

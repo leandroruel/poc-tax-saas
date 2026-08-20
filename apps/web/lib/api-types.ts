@@ -37,6 +37,27 @@ export type CalculationOperationType =
   | "credit_pj_principal_defined"
   | "insurance_vgbl";
 
+export type StoredIofOperation =
+  | {
+      kind: "credit";
+      modality: "principal_defined";
+      occurredOn: string;
+      amount: string;
+      borrower: { personType: "PJ" };
+      termInDays: number;
+    }
+  | {
+      kind: "vgbl";
+      occurredOn: string;
+      amount: string;
+      insured: { personType: "PF" };
+      payer: "policyholder" | "employer";
+      priorContributions: {
+        sameInsurer?: string;
+        allInsurers?: string;
+      };
+    };
+
 export type CalculationStatus =
   | "calculated"
   | "unsupported"
@@ -55,7 +76,14 @@ export type CalculationOutcome =
         ruleId: string;
         ruleVersion: number;
         operationType: CalculationOperationType;
+        effectivePeriod: { from: string; to: string | null };
+        rate: { percentage: string; unit: "percent" | "daily_percent" };
+        additionalRate?: {
+          percentage: string;
+          unit: "percent" | "daily_percent";
+        };
         legalBasis: string;
+        evidence: string[];
       };
     }
   | { kind: "unsupported"; reason: string }
@@ -68,7 +96,19 @@ export type CalculationRecord = {
   id: string;
   operationType: CalculationOperationType;
   occurredOn: string;
+  input: StoredIofOperation;
   outcome: CalculationOutcome;
+  ruleSnapshot: null | {
+    id: string;
+    version: number;
+    status: "draft" | "pending_review" | "approved" | "rejected" | "revoked";
+    operationType: CalculationOperationType;
+    effectiveFrom: string;
+    effectiveTo: string | null;
+    treatment: unknown;
+    legalBasis: string;
+    sourceUrl?: string;
+  };
   recalculatesId: string | null;
   createdAt: string;
   createdBy: { id: string; name: string };
