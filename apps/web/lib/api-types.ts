@@ -82,6 +82,13 @@ export type CalculationPage = {
 export type DashboardOverview = {
   totalCalculations: number;
   ruleVersionCount: number;
+  calculatedTaxAmount30Days: string;
+  attentionRequired: number;
+  activity: {
+    date: string;
+    calculations: number;
+    taxAmount: string;
+  }[];
   recentCalculations: CalculationRecord[];
 };
 

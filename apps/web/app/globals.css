@@ -512,7 +512,7 @@ nav button.active {
 }
 .metric-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 14px;
   margin-bottom: 18px;
 }
@@ -536,6 +536,83 @@ nav button.active {
 .metric small {
   color: #87938f;
   font-size: 11px;
+}
+.metric.attention {
+  border-color: #f0c9a4;
+  background: #fffaf3;
+}
+.metric.attention strong { color: #9a5b12; }
+.activity-chart-wrap {
+  display: grid;
+  gap: 18px;
+}
+.activity-chart-summary {
+  display: flex;
+  justify-content: flex-end;
+  gap: 18px;
+  color: var(--muted);
+  font-size: 10px;
+}
+.activity-chart-summary span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.chart-key {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  background: var(--green);
+}
+.chart-key.volume { background: #a7c9bd; }
+.activity-chart {
+  display: grid;
+  grid-template-columns: repeat(14, 1fr);
+  gap: clamp(5px, 1vw, 12px);
+  min-height: 185px;
+  padding: 8px 4px 0;
+  border-bottom: 1px solid var(--line);
+}
+.activity-day {
+  display: grid;
+  grid-template-rows: 150px 22px;
+  gap: 5px;
+  min-width: 0;
+}
+.activity-bar-track {
+  position: relative;
+  align-self: end;
+  height: 150px;
+  overflow: hidden;
+  border-radius: 5px 5px 0 0;
+  background: linear-gradient(to top, #f1f5f3, transparent);
+}
+.activity-bar,
+.activity-volume-bar {
+  position: absolute;
+  inset: 0;
+  transform-origin: bottom;
+  transition: transform 300ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.activity-bar {
+  left: 12%;
+  right: 12%;
+  border-radius: 5px 5px 0 0;
+  background: linear-gradient(to top, #0d6b4f, #42a584);
+}
+.activity-volume-bar {
+  left: 37%;
+  right: 37%;
+  opacity: 0.65;
+  border-radius: 3px 3px 0 0;
+  background: #c2ded4;
+}
+.activity-day small {
+  overflow: visible;
+  color: var(--muted);
+  font-size: 9px;
+  text-align: center;
+  white-space: nowrap;
 }
 .panel {
   overflow: hidden;

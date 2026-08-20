@@ -533,16 +533,35 @@ function Overview({
           <small>Histórico imutável</small>
         </div>
         <div className="metric">
-          <span>Tributo disponível</span>
-          <strong>IOF</strong>
-          <small>Crédito PJ e VGBL</small>
+          <span>IOF apurado · 30 dias</span>
+          <strong>
+            {data ? moneyDecimal(data.calculatedTaxAmount30Days) : "—"}
+          </strong>
+          <small>Somente resultados calculados</small>
+        </div>
+        <div className={`metric ${data?.attentionRequired ? "attention" : ""}`}>
+          <span>Requer atenção</span>
+          <strong>{data?.attentionRequired ?? "—"}</strong>
+          <small>Sem regra, contexto ou suporte</small>
         </div>
         <div className="metric">
-          <span>Catálogo</span>
-          <strong>{data ? `${data.ruleVersionCount} versões` : "—"}</strong>
-          <small>Vigência 2025 → atual</small>
+          <span>Regras aprovadas</span>
+          <strong>{data?.ruleVersionCount ?? "—"}</strong>
+          <small>Versões no catálogo global</small>
         </div>
       </div>
+      <Panel
+        title="Volume e IOF processado"
+        subtitle="Atividade registrada nos últimos 14 dias; use o histórico para investigar cada valor."
+      >
+        {error ? (
+          <Empty text={error} />
+        ) : loading || !data ? (
+          <Empty text="Carregando indicadores..." />
+        ) : (
+          <ActivityChart activity={data.activity} />
+        )}
+      </Panel>
       <Panel
         title="Atividade recente"
         subtitle="Últimos cálculos realizados neste workspace."
@@ -561,6 +580,75 @@ function Overview({
   );
 }
 
+function ActivityChart({
+  activity,
+}: {
+  activity: DashboardOverview["activity"];
+}) {
+  const hasActivity = activity.some(({ calculations }) => calculations > 0);
+  if (!hasActivity) {
+    return <Empty text="Ainda não há atividade suficiente para exibir a evolução." />;
+  }
+  const amounts = activity.map(({ taxAmount }) => Number(taxAmount));
+  const maxAmount = Math.max(...amounts);
+  const maxCalculations = Math.max(
+    ...activity.map(({ calculations }) => calculations),
+  );
+  const usesAmount = maxAmount > 0;
+  return (
+    <div className="activity-chart-wrap">
+      <div className="activity-chart-summary">
+        <span>
+          <i className="chart-key tax" /> IOF apurado
+        </span>
+        <span>
+          <i className="chart-key volume" /> Cálculos no dia
+        </span>
+      </div>
+      <div
+        className="activity-chart"
+        role="img"
+        aria-label="IOF apurado e quantidade de cálculos por dia nos últimos 14 dias"
+      >
+        {activity.map((point, index) => {
+          const amount = amounts[index];
+          const scale = usesAmount
+            ? amount / maxAmount
+            : point.calculations / maxCalculations;
+          return (
+            <div
+              className="activity-day"
+              key={point.date}
+              title={`${new Date(`${point.date}T12:00:00`).toLocaleDateString("pt-BR")}: ${point.calculations} cálculo(s), ${moneyDecimal(point.taxAmount)} de IOF`}
+            >
+              <div className="activity-bar-track">
+                <span
+                  className="activity-bar"
+                  style={{ transform: `scaleY(${Math.max(scale, 0.025)})` }}
+                />
+                <span
+                  className="activity-volume-bar"
+                  style={{
+                    transform: `scaleY(${Math.max(point.calculations / maxCalculations, 0.025)})`,
+                  }}
+                />
+              </div>
+              <small>
+                {index === 0 || index === activity.length - 1 || index === 6
+                  ? new Date(`${point.date}T12:00:00`).toLocaleDateString(
+                      "pt-BR",
+                      { day: "2-digit", month: "2-digit" },
+                    )
+                  : ""}
+              </small>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function Empty({ text }: { text: string }) {
   return (
     <div className="empty-state">
@@ -574,6 +662,11 @@ function money(value: number) {
     style: "currency",
     currency: "BRL",
   }).format(value);
+}
+
+function moneyDecimal(value: string): string {
+  const [whole, fraction = "00"] = value.split(".");
+  return `R$ ${BigInt(whole).toLocaleString("pt-BR")},${fraction.padEnd(2, "0")}`;
 }
 
 function organizationRoleLabel(role: OrganizationRole): string {

@@ -56,5 +56,12 @@ export interface CalculationPage {
 export interface CalculationOverview {
   readonly totalCalculations: number;
   readonly ruleVersionCount: number;
+  readonly calculatedTaxAmount30Days: string;
+  readonly attentionRequired: number;
+  readonly activity: readonly {
+    readonly date: string;
+    readonly calculations: number;
+    readonly taxAmount: string;
+  }[];
   readonly recentCalculations: readonly CalculationRecord[];
 }
