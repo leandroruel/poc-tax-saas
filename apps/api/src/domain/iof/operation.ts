@@ -1,14 +1,6 @@
 import type { Money } from "../shared/money.js";
-
-export type LocalDate = string;
-
-export function isLocalDate(value: string): value is LocalDate {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
-  const date = new Date(`${value}T00:00:00.000Z`);
-  return (
-    !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value
-  );
-}
+import type { LocalDate } from "../shared/local-date.js";
+export { isLocalDate, type LocalDate } from "../shared/local-date.js";
 
 export interface CreditOperation {
   kind: "credit";

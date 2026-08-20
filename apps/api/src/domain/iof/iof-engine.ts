@@ -1,11 +1,12 @@
 import type { TenantContext } from "../tenancy/tenant-context.js";
 import type { Money } from "../shared/money.js";
+import { applyPercentage } from "../shared/percentage.js";
 import {
   assertValidIofOperation,
   type IofOperation,
 } from "./operation.js";
 import type { IofOutcome } from "./outcome.js";
-import type { IofOperationType, IofRuleVersion, TaxRate } from "./rule.js";
+import type { IofOperationType, IofRuleVersion } from "./rule.js";
 
 function operationTypeOf(operation: IofOperation): IofOperationType {
   return operation.kind === "credit"
@@ -18,15 +19,6 @@ function isEffective(rule: IofRuleVersion, occurredOn: string): boolean {
     rule.effectiveFrom <= occurredOn &&
     (rule.effectiveTo === null || occurredOn < rule.effectiveTo)
   );
-}
-
-function applyRate(base: Money, rate: TaxRate, multiplier = 1): Money {
-  const [whole, fraction = ""] = rate.percentage.split(".");
-  const scale = 10n ** BigInt(fraction.length);
-  const numeratorRate = BigInt(whole) * scale + BigInt(fraction || "0");
-  const denominator = scale * 100n;
-  const numerator = base * numeratorRate * BigInt(multiplier);
-  return ((numerator + denominator / 2n) / denominator) as Money;
 }
 
 function taxableBaseFor(
@@ -111,13 +103,16 @@ export class IofEngine {
       rule.treatment.rate.unit === "daily_percent"
         ? Math.min(operation.termInDays, 365)
         : 1;
-    const primaryAmount = applyRate(
+    const primaryAmount = applyPercentage(
       taxableBase,
-      rule.treatment.rate,
+      rule.treatment.rate.percentage,
       multiplier,
     );
     const additionalAmount = rule.treatment.additionalRate
-      ? applyRate(operation.amount, rule.treatment.additionalRate)
+      ? applyPercentage(
+          operation.amount,
+          rule.treatment.additionalRate.percentage,
+        )
       : (0n as Money);
 
     return {
