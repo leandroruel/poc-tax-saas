@@ -3,6 +3,7 @@
 import * as React from "react";
 import {
   Building2,
+  Bell,
   Calculator,
   ChevronRight,
   FileClock,
@@ -20,6 +21,16 @@ import { authClient } from "@/lib/auth-client";
 import { Button } from "@/components/ui/button";
 import { Input, Select } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import type {
+  CalculationPage,
+  CalculationRecord,
+  CalculationStatus,
+  Company as CompanyDto,
+  DashboardOverview,
+  Me,
+  NotificationFeed,
+  OrganizationRole,
+} from "@/lib/api-types";
 
 type Section =
   | "overview"
@@ -28,23 +39,6 @@ type Section =
   | "company"
   | "rules"
   | "audit";
-type Me = {
-  id: string;
-  name: string;
-  email: string;
-  platformRole: "user" | "super_admin";
-  onboardingRequired: boolean;
-  membership: null | {
-    role: string;
-    organization: {
-      id: string;
-      name: string;
-      slug: string;
-      segment: "credit_provider" | "insurance_pension";
-    };
-  };
-};
-
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
     ...init,
@@ -420,8 +414,91 @@ function Panel({
   );
 }
 
-function Overview({ setSection }: { setSection: (section: Section) => void }) {
-  const { data, error, loading } = useApiQuery<any>("/api/dashboard");
+function NotificationBell() {
+  const [open, setOpen] = React.useState(false);
+  const { data, error, reload } =
+    useApiQuery<NotificationFeed>("/api/notifications?limit=20");
+
+  React.useEffect(() => {
+    const timer = window.setInterval(() => void reload(), 15_000);
+    return () => window.clearInterval(timer);
+  }, [reload]);
+
+  async function markRead(notificationId: string) {
+    await api(`/api/notifications/${notificationId}/read`, { method: "POST" });
+    await reload();
+  }
+
+  return (
+    <div className="notification-center">
+      <button
+        className="notification-trigger"
+        type="button"
+        aria-label="Notificações"
+        aria-expanded={open}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <Bell size={19} />
+        {!!data?.unreadCount && (
+          <span className="notification-count">
+            {Math.min(data.unreadCount, 99)}
+          </span>
+        )}
+      </button>
+      {open && (
+        <section className="notification-popover" aria-label="Notificações">
+          <header>
+            <div>
+              <strong>Notificações</strong>
+              <small>
+                {data?.unreadCount
+                  ? `${data.unreadCount} não lida${data.unreadCount === 1 ? "" : "s"}`
+                  : "Tudo em dia"}
+              </small>
+            </div>
+          </header>
+          {error ? (
+            <p className="notification-empty">{error}</p>
+          ) : data?.items.length ? (
+            <div className="notification-list">
+              {data.items.map((notification) => (
+                <button
+                  type="button"
+                  key={notification.id}
+                  className={notification.readAt ? "read" : "unread"}
+                  onClick={() => void markRead(notification.id)}
+                >
+                  <span className="notification-dot" />
+                  <span>
+                    <strong>{notification.title}</strong>
+                    <small>{notification.message}</small>
+                    <time>
+                      {new Date(notification.createdAt).toLocaleString("pt-BR")}
+                    </time>
+                  </span>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <p className="notification-empty">
+              Conclusões, falhas e revisões de lotes aparecerão aqui.
+            </p>
+          )}
+        </section>
+      )}
+    </div>
+  );
+}
+
+function Overview({
+  setSection,
+  canCreateCalculation,
+}: {
+  setSection: (section: Section) => void;
+  canCreateCalculation: boolean;
+}) {
+  const { data, error, loading } =
+    useApiQuery<DashboardOverview>("/api/dashboard");
   return (
     <>
       <div className="page-heading">
@@ -430,9 +507,11 @@ function Overview({ setSection }: { setSection: (section: Section) => void }) {
           <h1>Operação tributária</h1>
           <p>Acompanhe os cálculos e a cobertura do seu workspace.</p>
         </div>
-        <Button onClick={() => setSection("calculate")}>
-          <Calculator size={16} /> Novo cálculo
-        </Button>
+        {canCreateCalculation && (
+          <Button onClick={() => setSection("calculate")}>
+            <Calculator size={16} /> Novo cálculo
+          </Button>
+        )}
       </div>
       <div className="metric-grid">
         <div className="metric">
@@ -483,7 +562,18 @@ function money(value: number) {
     currency: "BRL",
   }).format(value);
 }
-function CalculationRows({ rows }: { rows: any[] }) {
+
+function organizationRoleLabel(role: OrganizationRole): string {
+  const labels: Record<OrganizationRole, string> = {
+    owner: "Proprietário",
+    admin: "Administrador",
+    operator: "Operador",
+    reviewer: "Revisor",
+  };
+  return labels[role];
+}
+
+function CalculationRows({ rows }: { rows: readonly CalculationRecord[] }) {
   return (
     <div className="table-wrap">
       <table>
@@ -513,11 +603,11 @@ function CalculationRows({ rows }: { rows: any[] }) {
               </td>
               <td>
                 <span className={`badge ${row.outcome.kind}`}>
-                  {row.outcome.kind}
+                  {calculationStatusLabels[row.outcome.kind]}
                 </span>
               </td>
               <td>
-                {row.outcome.result
+                {row.outcome.kind === "calculated"
                   ? money(Number(row.outcome.result.amount))
                   : "—"}
               </td>
@@ -702,9 +792,71 @@ function Calculate({
   );
 }
 
+const calculationStatusLabels: Record<CalculationStatus, string> = {
+  calculated: "Calculado",
+  unsupported: "Não suportado",
+  not_applicable: "Não aplicável",
+  requires_context: "Requer dados",
+  no_rule: "Sem regra",
+  ambiguous_rule: "Regra ambígua",
+};
+
 function History() {
-  const { data: rows, error, loading } =
-    useApiQuery<any[]>("/api/calculations");
+  const [path, setPath] = React.useState("/api/calculations?limit=25");
+  const { data, error, loading } = useApiQuery<CalculationPage>(path);
+  const [rows, setRows] = React.useState<CalculationRecord[]>([]);
+  const [nextCursor, setNextCursor] = React.useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = React.useState(false);
+  const [pageError, setPageError] = React.useState("");
+
+  React.useEffect(() => {
+    if (!data) return;
+    setRows(data.items);
+    setNextCursor(data.nextCursor);
+  }, [data]);
+
+  function applyFilters(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const params = new URLSearchParams({ limit: "25" });
+    for (const key of [
+      "calculationId",
+      "operationType",
+      "status",
+      "occurredFrom",
+      "occurredTo",
+    ]) {
+      const value = String(form.get(key) ?? "").trim();
+      if (value) params.set(key, value);
+    }
+    setRows([]);
+    setNextCursor(null);
+    setPageError("");
+    setPath(`/api/calculations?${params.toString()}`);
+  }
+
+  async function loadMore() {
+    if (!nextCursor) return;
+    setLoadingMore(true);
+    setPageError("");
+    try {
+      const separator = path.includes("?") ? "&" : "?";
+      const page = await api<CalculationPage>(
+        `${path}${separator}cursor=${encodeURIComponent(nextCursor)}`,
+      );
+      setRows((current) => [...current, ...page.items]);
+      setNextCursor(page.nextCursor);
+    } catch (reason) {
+      setPageError(
+        reason instanceof Error
+          ? reason.message
+          : "Não foi possível carregar mais cálculos.",
+      );
+    } finally {
+      setLoadingMore(false);
+    }
+  }
+
   return (
     <>
       <div className="page-heading">
@@ -717,13 +869,61 @@ function History() {
           </p>
         </div>
       </div>
-      <Panel title="Cálculos" subtitle="Até 100 registros mais recentes.">
-        {error ? (
-          <Empty text={error} />
-        ) : loading || rows === null ? (
+      <Panel
+        title="Cálculos"
+        subtitle="Livro imutável, filtrado e ordenado do registro mais recente para o mais antigo."
+      >
+        <form className="ledger-filters" onSubmit={applyFilters}>
+          <Field label="ID do cálculo">
+            <Input name="calculationId" placeholder="UUID do registro" />
+          </Field>
+          <Field label="Modalidade">
+            <Select name="operationType" defaultValue="">
+              <option value="">Todas</option>
+              <option value="credit_pj_principal_defined">Crédito PJ</option>
+              <option value="insurance_vgbl">VGBL</option>
+            </Select>
+          </Field>
+          <Field label="Status">
+            <Select name="status" defaultValue="">
+              <option value="">Todos</option>
+              {Object.entries(calculationStatusLabels).map(([value, label]) => (
+                <option key={value} value={value}>
+                  {label}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="Operação desde">
+            <Input name="occurredFrom" type="date" />
+          </Field>
+          <Field label="Operação até">
+            <Input name="occurredTo" type="date" />
+          </Field>
+          <div className="ledger-filter-action">
+            <Button type="submit">Aplicar filtros</Button>
+          </div>
+        </form>
+        {error || pageError ? (
+          <Empty text={error || pageError} />
+        ) : loading && rows.length === 0 ? (
           <Empty text="Carregando histórico..." />
         ) : rows.length ? (
-          <CalculationRows rows={rows} />
+          <>
+            <CalculationRows rows={rows} />
+            {nextCursor && (
+              <div className="ledger-pagination">
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={loadingMore}
+                  onClick={loadMore}
+                >
+                  {loadingMore ? "Carregando..." : "Carregar mais"}
+                </Button>
+              </div>
+            )}
+          </>
         ) : (
           <Empty text="Nenhum cálculo encontrado." />
         )}
@@ -734,7 +934,7 @@ function History() {
 
 function Company() {
   const { data: company, error, loading } =
-    useApiQuery<any>("/api/company");
+    useApiQuery<CompanyDto>("/api/company");
   return (
     <>
       <div className="page-heading">
@@ -752,7 +952,7 @@ function Company() {
           <Empty text={error} />
         ) : company ? (
           <div className="member-list">
-            {company.members.map((member: any) => (
+            {company.members.map((member) => (
               <div className="member" key={member.id}>
                 <span className="avatar">
                   {member.user.name.slice(0, 2).toUpperCase()}
@@ -761,7 +961,9 @@ function Company() {
                   <strong>{member.user.name}</strong>
                   <small>{member.user.email}</small>
                 </div>
-                <span className="badge neutral">{member.role}</span>
+                <span className="badge neutral">
+                  {organizationRoleLabel(member.role)}
+                </span>
               </div>
             ))}
           </div>
@@ -1077,12 +1279,20 @@ function Dashboard({ me }: { me: Me }) {
   const [section, setSection] = React.useState<Section>("overview");
   const [mobile, setMobile] = React.useState(false);
   const organization = me.membership!.organization;
+  const permissions = me.membership!.permissions;
+  const canCreateCalculation = permissions.includes("calculation:create");
   const nav: { id: Section; label: string; icon: LucideIcon }[] = [
     { id: "overview", label: "Visão geral", icon: LayoutDashboard },
-    { id: "calculate", label: "Novo cálculo", icon: Calculator },
     { id: "history", label: "Histórico", icon: FileClock },
     { id: "company", label: "Empresa e equipe", icon: Users },
   ];
+  if (canCreateCalculation) {
+    nav.splice(1, 0, {
+      id: "calculate",
+      label: "Novo cálculo",
+      icon: Calculator,
+    });
+  }
   if (me.platformRole === "super_admin")
     nav.push(
       { id: "rules", label: "Regras globais", icon: Settings2 },
@@ -1137,7 +1347,7 @@ function Dashboard({ me }: { me: Me }) {
           <div>
             <strong>{me.name}</strong>
             <small>
-              {me.membership!.role}
+              {organizationRoleLabel(me.membership!.role)}
               {me.platformRole === "super_admin" ? " · super-admin" : ""}
             </small>
           </div>
@@ -1159,8 +1369,16 @@ function Dashboard({ me }: { me: Me }) {
           </button>
           <div className="brand dark">TaxMan</div>
         </header>
+        <div className="workspace-toolbar">
+          <NotificationBell />
+        </div>
         <div className="workspace-content">
-          {section === "overview" && <Overview setSection={setSection} />}
+          {section === "overview" && (
+            <Overview
+              setSection={setSection}
+              canCreateCalculation={canCreateCalculation}
+            />
+          )}
           {section === "calculate" && (
             <Calculate segment={organization.segment} />
           )}

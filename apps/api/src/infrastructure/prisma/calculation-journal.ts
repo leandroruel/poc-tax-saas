@@ -1,6 +1,7 @@
 import type { PrismaClient } from "@prisma/client";
 import { v7 as uuidv7 } from "uuid";
 import type { CalculationJournal } from "../../application/ports/calculation-journal.js";
+import { CalculationRevisionSourceNotFoundError } from "../../application/calculation-errors.js";
 import type { IofOperation } from "../../domain/iof/operation.js";
 import { selectedRuleIdOf } from "../../domain/iof/outcome.js";
 import { jsonObject } from "./json.js";
@@ -17,6 +18,20 @@ export function createPrismaCalculationJournal(
   return {
     async record({ command, outcome, selectedRule }) {
       return prisma.$transaction(async (transaction) => {
+        if (command.recalculatesId) {
+          const revisionSource = await transaction.calculation.findFirst({
+            where: {
+              id: command.recalculatesId,
+              organizationId: command.tenant.id,
+            },
+            select: { id: true },
+          });
+          if (!revisionSource) {
+            throw new CalculationRevisionSourceNotFoundError(
+              command.recalculatesId,
+            );
+          }
+        }
         const calculationId = uuidv7();
         await transaction.calculation.create({
           data: {

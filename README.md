@@ -16,7 +16,8 @@ docker compose up --build
 
 A primeira saída pode ser usada em `BETTER_AUTH_SECRET`; as duas seguintes, em
 `PERSONAL_DATA_ENCRYPTION_KEY` e `PERSONAL_DATA_INDEX_KEY`. Defina também uma
-senha própria em `TAXMAN_ADMIN_PASSWORD`.
+senha própria em `TAXMAN_ADMIN_PASSWORD` e uma senha local para o Silo em
+`SILO_ROOT_PASSWORD`.
 
 Acesse `http://localhost:3001`. O seed cria o super-admin usando
 `TAXMAN_ADMIN_EMAIL` e `TAXMAN_ADMIN_PASSWORD`; não existem credenciais padrão
@@ -39,16 +40,34 @@ pnpm dev
 - Web: `http://localhost:3001`
 - API: `http://localhost:3000`
 - Health check: `http://localhost:3000/health`
+- Silo (API S3): `http://localhost:9000`
+- Silo (console local): `http://localhost:9001`
+
+Além dos processos web e API, o Compose inicia:
+
+- PostgreSQL para dados transacionais e auditoria;
+- Redis com AOF e política `noeviction`, usado pelo BullMQ;
+- um worker separado da API para execução assíncrona; cada tipo de job define
+  sua política explícita de tentativas e backoff;
+- Silo, storage local compatível com S3, e a criação idempotente do bucket.
+
+O worker é o responsável pelos gatilhos agendados, incluindo a ativação de
+regras aprovadas quando a vigência chega. API e worker usam as mesmas portas de
+aplicação, sem depender de um provedor de nuvem.
 
 ## Decisões importantes
 
 - Better Auth `Organization` é o tenant canônico; um usuário possui no máximo um `Member` por constraint de banco.
 - O cliente nunca envia `tenantId`; a API o deriva da organização ativa da sessão.
 - CPF reside em `UserProfile`, protegido por AES-256-GCM e índice cego HMAC-SHA256. A API não devolve CPF.
-- Cálculos e logs de auditoria são append-only; uma recálculo cria novo registro relacionado.
+- Cálculos e logs de auditoria são append-only; um recálculo cria novo registro relacionado e só pode apontar para um cálculo do mesmo tenant.
+- O ledger de cálculos usa cursor estável, filtros validados e escopo obrigatório por organização.
+- Papéis organizacionais são `owner`, `admin`, `operator` e `reviewer`; permissões são verificadas no servidor, não apenas escondidas na interface.
 - Somente `super_admin` administra regras globais. Tenants não alteram fórmulas.
 - A vigência é escolhida por `operation.occurredOn`, não pela data atual nem por uma data livre de consulta.
 - O MVP suporta somente crédito PJ com principal/prazo definidos e VGBL. Outras modalidades são rejeitadas em vez de aproximadas.
+- Jobs, tentativas e notificações possuem escopo por organização. O sino do dashboard consulta somente notificações do usuário autenticado.
+- Arquivos de importação e exportação usam uma porta S3; localmente ela aponta para o Silo e pode ser trocada por outro storage compatível sem alterar o domínio.
 
 Veja [o mapa do domínio](apps/api/src/domain/README.md) para localizar rapidamente cada regra de negócio.
 

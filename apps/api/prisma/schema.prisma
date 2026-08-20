@@ -25,6 +25,42 @@ enum RuleEditorialStatus {
   revoked
 }
 
+enum ImportBatchStatus {
+  draft
+  validating
+  ready
+  processing
+  requires_review
+  closed
+  failed
+  cancelled
+}
+
+enum BackgroundJobStatus {
+  queued
+  active
+  retrying
+  completed
+  failed
+  cancelled
+}
+
+enum JobAttemptStatus {
+  active
+  completed
+  failed
+}
+
+enum NotificationType {
+  batch_completed
+  batch_requires_review
+  job_failed
+  job_recovered
+  export_ready
+  rule_scheduled
+  rule_activated
+}
+
 model User {
   id            String       @id
   name          String
@@ -44,6 +80,9 @@ model User {
   rulesCreated    TaxRuleVersion[] @relation("RuleCreatedBy")
   rulesReviewed   TaxRuleVersion[] @relation("RuleReviewedBy")
   auditEvents     AuditLog[]       @relation("AuditActor")
+  importBatches   ImportBatch[]
+  backgroundJobs BackgroundJob[]
+  notifications  Notification[]
 }
 
 model Session {
@@ -108,6 +147,9 @@ model Organization {
   invitations  Invitation[]
   calculations Calculation[]
   auditEvents  AuditLog[]
+  importBatches ImportBatch[]
+  backgroundJobs BackgroundJob[]
+  notifications Notification[]
 }
 
 model Member {
@@ -203,9 +245,10 @@ model Calculation {
   recalculates   Calculation?    @relation("CalculationRevision", fields: [recalculatesId], references: [id], onDelete: Restrict)
   recalculations Calculation[]   @relation("CalculationRevision")
 
-  @@index([organizationId, createdAt])
+  @@index([organizationId, createdAt(sort: Desc), id(sort: Desc)])
   @@index([createdById])
   @@index([ruleVersionId])
+  @@index([recalculatesId])
 }
 
 model AuditLog {
@@ -225,4 +268,95 @@ model AuditLog {
   @@index([entityType, entityId, occurredAt])
   @@index([organizationId, occurredAt])
   @@index([actorUserId, occurredAt])
+}
+
+model ImportBatch {
+  id               String            @id
+  organizationId   String            @db.Uuid
+  createdById      String
+  status           ImportBatchStatus @default(draft)
+  sourceKind       String            @default("manual_upload")
+  originalFileName String?
+  objectKey        String?
+  contentHash      String?
+  totalRows        Int               @default(0)
+  validRows        Int               @default(0)
+  invalidRows      Int               @default(0)
+  processedRows    Int               @default(0)
+  failedRows       Int               @default(0)
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  closedAt         DateTime?
+  organization     Organization      @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  createdBy        User              @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  jobs             BackgroundJob[]
+
+  @@index([organizationId, createdAt(sort: Desc), id(sort: Desc)])
+  @@index([createdById])
+  @@index([status, updatedAt])
+}
+
+model BackgroundJob {
+  id               String              @id
+  organizationId   String              @db.Uuid
+  createdById      String
+  batchId          String?
+  type             String
+  status           BackgroundJobStatus @default(queued)
+  payload          Json
+  progressCurrent  Int                 @default(0)
+  progressTotal    Int                 @default(0)
+  attemptsMade     Int                 @default(0)
+  maxAttempts      Int                 @default(3)
+  correlationId    String              @unique
+  lastErrorCode    String?
+  lastErrorMessage String?
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+  startedAt        DateTime?
+  finishedAt       DateTime?
+  organization     Organization        @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  createdBy        User                @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  batch            ImportBatch?        @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  attempts         JobAttempt[]
+
+  @@index([organizationId, createdAt(sort: Desc), id(sort: Desc)])
+  @@index([createdById])
+  @@index([batchId])
+  @@index([status, updatedAt])
+}
+
+model JobAttempt {
+  id           String           @id
+  jobId        String
+  number       Int
+  status       JobAttemptStatus
+  correlationId String
+  errorCode    String?
+  errorMessage String?
+  startedAt    DateTime         @default(now())
+  finishedAt   DateTime?
+  job          BackgroundJob    @relation(fields: [jobId], references: [id], onDelete: Restrict)
+
+  @@unique([jobId, number])
+  @@index([jobId, startedAt])
+}
+
+model Notification {
+  id             String           @id
+  organizationId String           @db.Uuid
+  userId         String
+  type           NotificationType
+  title          String
+  message        String
+  entityType     String
+  entityId       String
+  createdAt      DateTime         @default(now())
+  readAt         DateTime?
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  user           User             @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([organizationId, createdAt(sort: Desc)])
+  @@index([userId, readAt, createdAt(sort: Desc)])
+  @@index([entityType, entityId])
 }

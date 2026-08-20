@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { CalculateTax } from "../../../application/calculate-tax.js";
+import { CalculationRevisionSourceNotFoundError } from "../../../application/calculation-errors.js";
 import type { AuthenticateRequest } from "../../../application/ports/authenticator.js";
 import type { IofOperation } from "../../../domain/iof/operation.js";
 import { isLocalDate } from "../../../domain/iof/operation.js";
@@ -9,6 +10,7 @@ import {
   moneyFromNumber,
 } from "../../../domain/shared/money.js";
 import { presentCalculation } from "../tax-presenter.js";
+import { requireOrganizationPermission } from "../organization-guard.js";
 
 const localDateSchema = z.string().refine(isLocalDate, "data inválida");
 const moneySchema = z
@@ -90,9 +92,13 @@ export function registerTaxRoutes(
   authenticate: AuthenticateRequest,
 ) {
   app.post("/tax/calculate", async (request, reply) => {
-    const actor = await authenticate(request.headers);
-    if (actor === null)
-      return reply.status(401).send({ error: "unauthenticated" });
+    const actor = await requireOrganizationPermission(
+      authenticate,
+      request.headers,
+      reply,
+      "calculation:create",
+    );
+    if (!actor) return;
 
     const parsed = requestSchema.safeParse(request.body);
     if (!parsed.success) {
@@ -104,12 +110,22 @@ export function registerTaxRoutes(
         });
     }
 
-    const response = await calculateTax({
-      actorUserId: actor.userId,
-      tenant: { id: actor.tenantId, segment: actor.segment },
-      operation: toDomainOperation(parsed.data.operation),
-      recalculatesId: parsed.data.recalculatesId,
-    });
+    let response;
+    try {
+      response = await calculateTax({
+        actorUserId: actor.userId,
+        tenant: { id: actor.tenantId, segment: actor.segment },
+        operation: toDomainOperation(parsed.data.operation),
+        recalculatesId: parsed.data.recalculatesId,
+      });
+    } catch (error) {
+      if (error instanceof CalculationRevisionSourceNotFoundError) {
+        return reply.status(404).send({
+          error: "calculation_revision_source_not_found",
+        });
+      }
+      throw error;
+    }
     const status =
       response.outcome.kind === "ambiguous_rule"
         ? 409

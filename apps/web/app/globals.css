@@ -372,6 +372,109 @@ nav button.active {
 .workspace {
   min-width: 0;
 }
+.workspace-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 15;
+  display: flex;
+  justify-content: flex-end;
+  height: 0;
+  padding: 18px clamp(28px, 4vw, 64px) 0;
+  pointer-events: none;
+}
+.notification-center {
+  position: relative;
+  pointer-events: auto;
+}
+.notification-trigger {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: #4d5c57;
+  background: #fff;
+  box-shadow: 0 8px 24px rgba(17, 46, 37, 0.06);
+}
+.notification-count {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  display: grid;
+  place-items: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border: 2px solid var(--paper);
+  border-radius: 99px;
+  color: #fff;
+  background: var(--danger);
+  font-size: 9px;
+  font-weight: 800;
+}
+.notification-popover {
+  position: absolute;
+  top: 48px;
+  right: 0;
+  width: min(390px, calc(100vw - 40px));
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 20px 60px rgba(17, 46, 37, 0.16);
+}
+.notification-popover > header {
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--line);
+}
+.notification-popover > header div,
+.notification-list button > span:last-child {
+  display: grid;
+  gap: 3px;
+}
+.notification-popover small,
+.notification-popover time {
+  color: var(--muted);
+  font-size: 10px;
+}
+.notification-list {
+  max-height: 420px;
+  overflow: auto;
+}
+.notification-list button {
+  display: grid;
+  grid-template-columns: 10px 1fr;
+  gap: 9px;
+  width: 100%;
+  padding: 14px 18px;
+  border: 0;
+  border-bottom: 1px solid #edf1ef;
+  color: var(--ink);
+  background: #fff;
+  text-align: left;
+}
+.notification-list button.unread {
+  background: #f5fbf8;
+}
+.notification-dot {
+  width: 7px;
+  height: 7px;
+  margin-top: 5px;
+  border-radius: 50%;
+  background: var(--green);
+}
+.notification-list button.read .notification-dot {
+  background: #c7cfcc;
+}
+.notification-empty {
+  margin: 0;
+  padding: 28px 20px;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+}
 .mobile-header {
   display: none;
 }
@@ -475,6 +578,28 @@ nav button.active {
 .table-wrap {
   overflow: auto;
   margin: -8px 0;
+}
+.ledger-filters {
+  display: grid;
+  grid-template-columns: minmax(190px, 1.25fr) repeat(4, minmax(135px, 1fr)) auto;
+  align-items: end;
+  gap: 12px;
+  margin-bottom: 24px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #f8faf9;
+}
+.ledger-filter-action {
+  padding-bottom: 1px;
+}
+.ledger-filter-action button {
+  white-space: nowrap;
+}
+.ledger-pagination {
+  display: flex;
+  justify-content: center;
+  padding-top: 20px;
 }
 table {
   width: 100%;
@@ -739,7 +864,8 @@ td small {
     padding: 30px 20px 60px;
   }
   .metric-grid,
-  .calculate-grid {
+  .calculate-grid,
+  .ledger-filters {
     grid-template-columns: 1fr;
   }
   .rule-version {

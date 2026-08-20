@@ -8,7 +8,9 @@ Esta pasta não importa Fastify, Prisma ou Better Auth. Ela contém somente regr
 - `iof/outcome.ts`: todos os resultados possíveis, inclusive falta de contexto e operação não suportada.
 - `rule-governance/rule-version-lifecycle.ts`: workflow editorial e status de implantação derivados da vigência.
 - `identity/`: normalização e validação de CPF/CNPJ. Criptografia é responsabilidade da infraestrutura.
-- `tenancy/`: linguagem comum do tenant; a entidade persistida é `Organization` do Better Auth.
+- `tenancy/tenant-context.ts`: segmento e identidade do tenant usados pelo motor.
+- `tenancy/organization-access.ts`: papéis e permissões organizacionais. É a política central usada pelos guards HTTP e pela UI.
+- `operations/import-batch.ts`: ciclo de vida permitido para lotes; estados fechados e cancelados são terminais e imutáveis.
 - `shared/money.ts`: dinheiro em centavos com `bigint`, sem aritmética tributária em ponto flutuante.
 
 O caminho de uma requisição é:
@@ -16,5 +18,7 @@ O caminho de uma requisição é:
 `HTTP → caso de uso → portas → domínio → adaptadores Prisma`
 
 Regras globais nunca recebem `tenantId`. Dados de cálculo sempre recebem o tenant derivado da sessão autenticada.
+
+O histórico de cálculos é um read model da aplicação. JSON persistido é validado por codecs antes de atravessar a porta `CalculationLedger`; o adapter Prisma não devolve `unknown` para as interfaces HTTP.
 
 > O catálogo inicial implementa o recorte acordado para o MVP e deve ser validado por profissional tributário antes de uso produtivo ou tomada de decisão fiscal.

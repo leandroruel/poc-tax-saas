@@ -1,9 +1,9 @@
 import { fromNodeHeaders } from "better-auth/node";
 import type {
   AuthenticateRequest,
-  OrganizationRole,
 } from "../../application/ports/authenticator.js";
 import type { AuthenticateUser } from "../../application/ports/user-authenticator.js";
+import { parseOrganizationRole } from "../../domain/tenancy/organization-access.js";
 import type { TenantSegment } from "../../domain/tenancy/tenant-context.js";
 import { prisma } from "../prisma/prisma-client.js";
 import { auth } from "./auth.js";
@@ -45,12 +45,8 @@ export const authenticateWithBetterAuth: AuthenticateRequest = async (
   });
   if (!membership) return null;
 
-  const organizationRole: OrganizationRole =
-    membership.role === "owner" ||
-    membership.role === "admin" ||
-    membership.role === "member"
-      ? membership.role
-      : "member";
+  const organizationRole = parseOrganizationRole(membership.role);
+  if (!organizationRole) return null;
 
   return {
     userId: session.user.id,

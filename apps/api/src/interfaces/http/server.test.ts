@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { CalculationRevisionSourceNotFoundError } from "../../application/calculation-errors.js";
 import { buildServer } from "./server.js";
 
 const authenticatedActor = {
@@ -74,6 +75,54 @@ describe("HTTP authentication boundary", () => {
         operation: expect.objectContaining({ occurredOn: "2025-06-10" }),
       }),
     );
+  });
+
+  it("keeps reviewers from creating calculations", async () => {
+    const calculateTax = vi.fn();
+    const server = await buildServer({
+      authenticate: async () => ({
+        ...authenticatedActor,
+        organizationRole: "reviewer",
+      }),
+      calculateTax,
+    });
+    servers.push(server);
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/tax/calculate",
+      payload: validCreditPayload,
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(response.json()).toEqual({ error: "forbidden" });
+    expect(calculateTax).not.toHaveBeenCalled();
+  });
+
+  it("does not reveal a calculation from another tenant as a revision source", async () => {
+    const server = await buildServer({
+      authenticate: async () => authenticatedActor,
+      calculateTax: async () => {
+        throw new CalculationRevisionSourceNotFoundError(
+          "0198c9c7-6aa0-7cc7-9c54-e0f144372be2",
+        );
+      },
+    });
+    servers.push(server);
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/tax/calculate",
+      payload: {
+        ...validCreditPayload,
+        recalculatesId: "0198c9c7-6aa0-7cc7-9c54-e0f144372be2",
+      },
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toEqual({
+      error: "calculation_revision_source_not_found",
+    });
   });
 
   it("returns conflict for ambiguous rule configuration", async () => {
@@ -157,11 +206,13 @@ describe("HTTP authentication boundary", () => {
     const server = await buildServer({
       authenticate: async () => authenticatedActor,
       tenantQueries: {
-        overview: vi.fn(),
-        calculations: vi.fn(),
-        getCalculation,
         company: vi.fn(),
         userContext: vi.fn(),
+      },
+      calculationLedger: {
+        overview: vi.fn(),
+        list: vi.fn(),
+        get: getCalculation,
       },
     });
     servers.push(server);
@@ -176,5 +227,141 @@ describe("HTTP authentication boundary", () => {
       authenticatedActor.tenantId,
       "calc_01",
     );
+  });
+
+  it("passes validated filters and an opaque cursor to the tenant ledger", async () => {
+    const list = vi.fn().mockResolvedValue({
+      items: [],
+      nextCursor: {
+        createdAt: "2026-08-20T12:00:00.000Z",
+        id: "calculation_01",
+      },
+    });
+    const server = await buildServer({
+      authenticate: async () => authenticatedActor,
+      calculationLedger: {
+        overview: vi.fn(),
+        list,
+        get: vi.fn(),
+      },
+    });
+    servers.push(server);
+
+    const response = await server.inject({
+      method: "GET",
+      url: "/api/calculations?limit=20&operationType=credit_pj_principal_defined&status=calculated&occurredFrom=2025-01-01&occurredTo=2025-12-31",
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(list).toHaveBeenCalledWith(authenticatedActor.tenantId, {
+      limit: 20,
+      cursor: undefined,
+      calculationId: undefined,
+      operationType: "credit_pj_principal_defined",
+      status: "calculated",
+      occurredFrom: "2025-01-01",
+      occurredTo: "2025-12-31",
+    });
+    expect(response.json()).toMatchObject({ items: [] });
+    expect(response.json().nextCursor).toEqual(expect.any(String));
+  });
+
+  it("rejects a malformed ledger cursor", async () => {
+    const list = vi.fn();
+    const server = await buildServer({
+      authenticate: async () => authenticatedActor,
+      calculationLedger: {
+        overview: vi.fn(),
+        list,
+        get: vi.fn(),
+      },
+    });
+    servers.push(server);
+
+    const response = await server.inject({
+      method: "GET",
+      url: "/api/calculations?cursor=not-a-cursor",
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({ error: "invalid_cursor" });
+    expect(list).not.toHaveBeenCalled();
+  });
+
+  it("scopes notifications to both the organization and signed-in user", async () => {
+    const notifications = vi.fn().mockResolvedValue({
+      items: [],
+      unreadCount: 0,
+    });
+    const server = await buildServer({
+      authenticate: async () => authenticatedActor,
+      operationalQueries: {
+        notifications,
+        markNotificationRead: vi.fn(),
+        jobs: vi.fn(),
+      },
+    });
+    servers.push(server);
+
+    const response = await server.inject({
+      method: "GET",
+      url: "/api/notifications?limit=12",
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(notifications).toHaveBeenCalledWith({
+      tenantId: authenticatedActor.tenantId,
+      userId: authenticatedActor.userId,
+      limit: 12,
+    });
+  });
+
+  it("does not mark another user's or tenant's notification as read", async () => {
+    const markNotificationRead = vi.fn().mockResolvedValue(false);
+    const server = await buildServer({
+      authenticate: async () => authenticatedActor,
+      operationalQueries: {
+        notifications: vi.fn(),
+        markNotificationRead,
+        jobs: vi.fn(),
+      },
+    });
+    servers.push(server);
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/api/notifications/notification_01/read",
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(markNotificationRead).toHaveBeenCalledWith({
+      tenantId: authenticatedActor.tenantId,
+      userId: authenticatedActor.userId,
+      notificationId: "notification_01",
+    });
+  });
+
+  it("scopes job monitoring to the authenticated organization", async () => {
+    const jobs = vi.fn().mockResolvedValue([]);
+    const server = await buildServer({
+      authenticate: async () => ({
+        ...authenticatedActor,
+        organizationRole: "reviewer",
+      }),
+      operationalQueries: {
+        notifications: vi.fn(),
+        markNotificationRead: vi.fn(),
+        jobs,
+      },
+    });
+    servers.push(server);
+
+    const response = await server.inject({
+      method: "GET",
+      url: "/api/jobs?limit=25",
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(jobs).toHaveBeenCalledWith(authenticatedActor.tenantId, 25);
   });
 });

@@ -5,14 +5,17 @@ import {
   type CalculateTax,
 } from "../../application/calculate-tax.js";
 import type { AuthenticateRequest } from "../../application/ports/authenticator.js";
+import type { CalculationLedger } from "../../application/ports/calculation-ledger.js";
 import type { AuthenticateUser } from "../../application/ports/user-authenticator.js";
 import type { RuleAdministration } from "../../application/ports/rule-administration.js";
+import type { OperationalQueries } from "../../application/ports/operational-queries.js";
 import type { TenantQueries } from "../../application/ports/tenant-queries.js";
 import {
   createOnboardCompany,
   type OnboardCompany,
 } from "../../application/onboard-company.js";
 import { createPrismaCalculationJournal } from "../../infrastructure/prisma/calculation-journal.js";
+import { createPrismaCalculationLedger } from "../../infrastructure/prisma/calculation-ledger.js";
 import { prisma } from "../../infrastructure/prisma/prisma-client.js";
 import { createPrismaRuleCatalog } from "../../infrastructure/prisma/rule-catalog.js";
 import {
@@ -20,21 +23,24 @@ import {
   authenticateWithBetterAuth,
 } from "../../infrastructure/auth/better-auth-authenticator.js";
 import { createPrismaOnboardingStore } from "../../infrastructure/prisma/onboarding-store.js";
+import { createPrismaOperationalQueries } from "../../infrastructure/prisma/operational-queries.js";
 import { createPrismaRuleAdministration } from "../../infrastructure/prisma/rule-administration.js";
 import { createPrismaTenantQueries } from "../../infrastructure/prisma/tenant-queries.js";
-import { recordScheduledRuleActivations } from "../../infrastructure/prisma/scheduled-rule-activation.js";
 import { createEnvironmentTaxIdVault } from "../../infrastructure/security/tax-id-vault.js";
 import { registerAuthRoutes } from "./routes/auth.routes.js";
 import { registerAdminRuleRoutes } from "./routes/admin-rule.routes.js";
 import { registerTenantRoutes } from "./routes/tenant.routes.js";
 import { registerOnboardingRoutes } from "./routes/onboarding.routes.js";
+import { registerOperationsRoutes } from "./routes/operations.routes.js";
 import { registerTaxRoutes } from "./routes/tax.routes.js";
 
 interface ServerDependencies {
   readonly authenticate: AuthenticateRequest;
   readonly authenticateUser: AuthenticateUser;
+  readonly calculationLedger: CalculationLedger;
   readonly calculateTax: CalculateTax;
   readonly onboardCompany: OnboardCompany;
+  readonly operationalQueries: OperationalQueries;
   readonly ruleAdministration: RuleAdministration;
   readonly tenantQueries: TenantQueries;
 }
@@ -46,6 +52,8 @@ function createProductionDependencies(
     authenticate: overrides.authenticate ?? authenticateWithBetterAuth,
     authenticateUser:
       overrides.authenticateUser ?? authenticateUserWithBetterAuth,
+    calculationLedger:
+      overrides.calculationLedger ?? createPrismaCalculationLedger(prisma),
     calculateTax:
       overrides.calculateTax ??
       createCalculateTax({
@@ -58,6 +66,8 @@ function createProductionDependencies(
         store: createPrismaOnboardingStore(prisma),
         taxIdVault: createEnvironmentTaxIdVault(),
       }),
+    operationalQueries:
+      overrides.operationalQueries ?? createPrismaOperationalQueries(prisma),
     ruleAdministration:
       overrides.ruleAdministration ?? createPrismaRuleAdministration(prisma),
     tenantQueries:
@@ -88,11 +98,17 @@ export async function buildServer(overrides: Partial<ServerDependencies> = {}) {
     dependencies.authenticate,
     dependencies.authenticateUser,
     dependencies.tenantQueries,
+    dependencies.calculationLedger,
   );
   registerOnboardingRoutes(
     app,
     dependencies.authenticateUser,
     dependencies.onboardCompany,
+  );
+  registerOperationsRoutes(
+    app,
+    dependencies.authenticate,
+    dependencies.operationalQueries,
   );
   registerTaxRoutes(app, dependencies.calculateTax, dependencies.authenticate);
 
@@ -103,16 +119,5 @@ const isMain = import.meta.url === `file://${process.argv[1]}`;
 if (isMain) {
   const app = await buildServer();
   const port = Number(process.env.PORT ?? 3000);
-  let activationTimer: NodeJS.Timeout | undefined;
-  app.addHook("onClose", async () => {
-    if (activationTimer) clearInterval(activationTimer);
-  });
   await app.listen({ port, host: "0.0.0.0" });
-  const recordActivations = () =>
-    recordScheduledRuleActivations(prisma).catch((error) =>
-      app.log.error(error),
-    );
-  await recordActivations();
-  activationTimer = setInterval(recordActivations, 60_000);
-  activationTimer.unref();
 }

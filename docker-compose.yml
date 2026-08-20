@@ -1,3 +1,20 @@
+x-api-environment: &api-environment
+  NODE_ENV: production
+  DATABASE_URL: postgresql://${POSTGRES_USER:?set POSTGRES_USER in .env}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/${POSTGRES_DB:?set POSTGRES_DB in .env}?schema=public
+  APP_ORIGIN: http://localhost:3001
+  BETTER_AUTH_URL: http://localhost:3000
+  BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?set BETTER_AUTH_SECRET in .env}
+  PERSONAL_DATA_ENCRYPTION_KEY: ${PERSONAL_DATA_ENCRYPTION_KEY:?set PERSONAL_DATA_ENCRYPTION_KEY in .env}
+  PERSONAL_DATA_INDEX_KEY: ${PERSONAL_DATA_INDEX_KEY:?set PERSONAL_DATA_INDEX_KEY in .env}
+  TAXMAN_ADMIN_EMAIL: ${TAXMAN_ADMIN_EMAIL:?set TAXMAN_ADMIN_EMAIL in .env}
+  TAXMAN_ADMIN_PASSWORD: ${TAXMAN_ADMIN_PASSWORD:?set TAXMAN_ADMIN_PASSWORD in .env}
+  REDIS_URL: redis://redis:6379
+  OBJECT_STORAGE_ENDPOINT: http://silo:9000
+  OBJECT_STORAGE_REGION: us-east-1
+  OBJECT_STORAGE_BUCKET: ${SILO_BUCKET:?set SILO_BUCKET in .env}
+  OBJECT_STORAGE_ACCESS_KEY: ${SILO_ROOT_USER:?set SILO_ROOT_USER in .env}
+  OBJECT_STORAGE_SECRET_KEY: ${SILO_ROOT_PASSWORD:?set SILO_ROOT_PASSWORD in .env}
+
 services:
   db:
     image: postgres:16-alpine
@@ -19,26 +36,76 @@ services:
       timeout: 3s
       retries: 20
 
+  redis:
+    image: redis:7.4-alpine
+    command:
+      [
+        "redis-server",
+        "--appendonly",
+        "yes",
+        "--appendfsync",
+        "everysec",
+        "--maxmemory-policy",
+        "noeviction",
+      ]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - taxman_redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  silo:
+    image: pgsty/silo:RELEASE.2026-08-06T00-00-00Z
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${SILO_ROOT_USER:?set SILO_ROOT_USER in .env}
+      MINIO_ROOT_PASSWORD: ${SILO_ROOT_PASSWORD:?set SILO_ROOT_PASSWORD in .env}
+    ports:
+      - "${SILO_API_PORT:-9000}:9000"
+      - "${SILO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - taxman_silo:/data
+    healthcheck:
+      test: ["CMD", "silo", "healthcheck", "live"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  silo-init:
+    image: pgsty/silo:RELEASE.2026-08-06T00-00-00Z
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        mcli alias set local http://silo:9000 "$$SILO_ROOT_USER" "$$SILO_ROOT_PASSWORD" &&
+        mcli mb --ignore-existing "local/$$SILO_BUCKET"
+    environment:
+      SILO_ROOT_USER: ${SILO_ROOT_USER:?set SILO_ROOT_USER in .env}
+      SILO_ROOT_PASSWORD: ${SILO_ROOT_PASSWORD:?set SILO_ROOT_PASSWORD in .env}
+      SILO_BUCKET: ${SILO_BUCKET:?set SILO_BUCKET in .env}
+    depends_on:
+      silo:
+        condition: service_healthy
+
   api:
     build:
       context: .
       dockerfile: docker/api.Dockerfile
     environment:
-      NODE_ENV: production
+      <<: *api-environment
       PORT: 3000
-      DATABASE_URL: postgresql://${POSTGRES_USER:?set POSTGRES_USER in .env}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/${POSTGRES_DB:?set POSTGRES_DB in .env}?schema=public
-      APP_ORIGIN: http://localhost:3001
-      BETTER_AUTH_URL: http://localhost:3000
-      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?set BETTER_AUTH_SECRET in .env}
-      PERSONAL_DATA_ENCRYPTION_KEY: ${PERSONAL_DATA_ENCRYPTION_KEY:?set PERSONAL_DATA_ENCRYPTION_KEY in .env}
-      PERSONAL_DATA_INDEX_KEY: ${PERSONAL_DATA_INDEX_KEY:?set PERSONAL_DATA_INDEX_KEY in .env}
-      TAXMAN_ADMIN_EMAIL: ${TAXMAN_ADMIN_EMAIL:?set TAXMAN_ADMIN_EMAIL in .env}
-      TAXMAN_ADMIN_PASSWORD: ${TAXMAN_ADMIN_PASSWORD:?set TAXMAN_ADMIN_PASSWORD in .env}
     ports:
       - "3000:3000"
     depends_on:
       db:
         condition: service_healthy
+      redis:
+        condition: service_healthy
+      silo-init:
+        condition: service_completed_successfully
     healthcheck:
       test:
         [
@@ -50,6 +117,21 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+
+  worker:
+    build:
+      context: .
+      dockerfile: docker/api.Dockerfile
+    command: ["pnpm", "--filter", "api", "worker"]
+    environment:
+      <<: *api-environment
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      silo-init:
+        condition: service_completed_successfully
 
   web:
     build:
@@ -65,3 +147,5 @@ services:
 
 volumes:
   taxman_postgres:
+  taxman_redis:
+  taxman_silo:
